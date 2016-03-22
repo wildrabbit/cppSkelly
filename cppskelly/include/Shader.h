@@ -1,0 +1,32 @@
+#ifndef SHADERH_H
+#define SHADERH_H
+
+#include <string>
+#include <glad\glad.h>
+#include <vector>
+class Shader
+{
+private:
+	GLuint mProgram;
+	GLuint mFrag, mVert;
+	std::vector<GLuint> mShaderIds;
+
+	void traceShaderLinkError(GLuint shaderId);
+	void traceShaderCompileError(GLuint shaderId);
+
+public:
+	Shader();
+	~Shader();
+
+	std::string getFileContents(const std::string& file);
+
+	void bindAttributeLocation(GLuint index, const std::string &attribute);
+	void useProgram();
+
+	bool init(const char** filenames, GLenum* types, int numShaders);
+	void cleanUp();
+
+	void registerUniform1i(const std::string& name,GLint value);
+};
+
+#endif
