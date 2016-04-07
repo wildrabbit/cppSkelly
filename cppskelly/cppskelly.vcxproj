@@ -141,6 +141,7 @@
     <ClCompile Include="src\Shader.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\GeomUtils.h" />
     <ClInclude Include="include\logUtils.h" />
     <ClInclude Include="include\Shader.h" />
   </ItemGroup>

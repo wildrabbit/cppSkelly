@@ -4,6 +4,7 @@
 #include <sstream>
 #include <chrono>
 
+#define GLM_SWIZZLE 
 #define GLM_FORCE_RADIANS 1
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -15,40 +16,12 @@
 #include "glad/glad.h"
 #include "logUtils.h"
 #include "Shader.h"
+#include "GeomUtils.h"
 
 #include <map>
 
 //Define this somewhere in your header file
 #define BUFFER_OFFSET(i) ((void*)(i))
-
-const float DEG2RAD = M_PI / 180.0f;
-const float RAD2DEG = 1.0f / DEG2RAD;
-
-enum class PivotType
-{
-	TopLeft,
-	Top,
-	TopRight,
-	CentreLeft,
-	Centre,
-	CentreRight,
-	BotLeft,
-	Bottom,
-	BotRight,
-	Custom
-};
-
-struct Rect
-{
-	float x, y, w, h;
-
-	Rect() : x(0.0f), y(0.0f), w(0.0f), h(0.0f){}
-
-	inline bool empty()
-	{
-		return w < FLT_EPSILON || h < FLT_EPSILON;
-	}
-};
 
 
 struct Texture
@@ -188,6 +161,11 @@ struct Sprite
 	float width;
 	float height;
 	float angle;
+
+	float speed;
+
+	glm::vec2 velocity;
+	glm::vec2 acceleration;
 
 	glm::vec2 pivot;
 	glm::mat4 modelMatrix;
@@ -698,11 +676,26 @@ void close(SDL_Window* window, SDL_GLContext context, Sprite* sprite)
 }
 
 
+struct Input
+{
+	float xAxis;
+	float yAxis;
+
+	void reset()
+	{
+		xAxis = yAxis = 0.0f;
+	}
+};
 float switchTimeout;
 bool drawLine;
-void update(float dt)
+void update(float dt, Input* input, Sprite* sprite)
 {
+	sprite->velocity.x = input->xAxis * sprite->speed;
+	sprite->velocity.y = input->yAxis * sprite->speed;
 
+	sprite->pos.x += sprite->velocity.x * dt;
+	sprite->pos.y += sprite->velocity.y * dt;
+	updateMatrixSprite(sprite);
 }
 
 
@@ -730,25 +723,44 @@ void render(SDL_Window* window, OrthoCamera* c, Sprite* s)
 	SDL_GL_SwapWindow(window);
 }
 
-void handleEvents(SDL_Event& event, bool& quit)
+
+void handleInput(SDL_Event& event, bool& quit, Input* input)
 {
+	input->reset();
+
+	const Uint8* keyState = SDL_GetKeyboardState(NULL);
+
+	if (keyState[SDL_SCANCODE_ESCAPE])
+	{
+		quit = true;
+	}
+	else
+	{
+		if (keyState[SDL_SCANCODE_LEFT])
+		{
+			input->xAxis = -1.0f;
+		}
+		else if (keyState[SDL_SCANCODE_RIGHT])
+		{
+			input->xAxis = 1.0f;
+		}
+
+		if (keyState[SDL_SCANCODE_UP])
+		{
+			input->yAxis = 1.0f;
+		}
+		else if (keyState[SDL_SCANCODE_DOWN])
+		{
+			input->yAxis = -1.0f;
+		}
+	}
+	
+		
 	while (SDL_PollEvent(&event)) 
 	{
 		if (event.type == SDL_QUIT) 
 		{
 			quit = true;
-		}
-		else if (event.type == SDL_KEYDOWN)
-		{
-			switch (event.key.keysym.sym)
-			{
-			case SDLK_ESCAPE:
-			{
-				quit = true;
-				break;
-			}
-			default:break;
-			}
 		}
 	}
 }
@@ -780,12 +792,14 @@ int main(int argc, char* args[])
 	static const std::string texPath("data/textures/chara_b.png");
 	Sprite sprite(spriteName);
 	initSprite(&sprite, texPath, DEFAULT_SHADER_NAME);
-	sprite.pos.x = -100.0f;
-	sprite.pos.y = 50.0f;
-	sprite.angle = 45.0f * DEG2RAD;
+	sprite.pos.x = 0.0f;
 	sprite.pos.y = 0.0f;
-	sprite.scale.x = 0.5f;
-	sprite.scale.y = 0.5f;
+	sprite.angle = 0.0f;
+	sprite.pos.y = 0.0f;
+	sprite.scale.xy = 0.5f;
+	sprite.velocity.xy = 0.0f;
+	sprite.speed = 300.0f;
+
 	updateMatrixSprite(&sprite);
 	sprite.alphaBlend = true;
 	glm::vec2 zero;
@@ -800,13 +814,14 @@ int main(int argc, char* args[])
 	std::chrono::time_point<std::chrono::system_clock> start, end;
 	start = std::chrono::system_clock::now();
 	float elapsedSecs = 0.0f;
+	Input input = { 0 };
 	while (!quit) 
 	{    
 		end = std::chrono::system_clock::now();
 		float elapsedSeconds = std::chrono::duration_cast<std::chrono::duration<float>>(end - start).count();
 		start = end;
-		handleEvents(event, quit);
-		update(elapsedSeconds);
+		handleInput(event, quit, &input);
+		update(elapsedSeconds, &input, &sprite);
 		render(window, &cam, &sprite);
 	}
 
