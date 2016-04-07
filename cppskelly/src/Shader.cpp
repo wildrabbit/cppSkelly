@@ -152,3 +152,15 @@ void Shader::registerUniform1i(const std::string& name,GLint value)
 	GLint loc = glGetUniformLocation(mProgram, name.c_str());
 	glProgramUniform1i(mProgram, loc, value);
 }
+
+void Shader::registerUniform1f(const std::string& name, GLfloat value)
+{
+	GLint loc = glGetUniformLocation(mProgram, name.c_str());
+	glProgramUniform1f(mProgram, loc, value);
+}
+
+void Shader::registerUniformMatrix4f(const std::string& name, GLfloat* matrix)
+{
+	GLint loc = glGetUniformLocation(mProgram, name.c_str());
+	glProgramUniformMatrix4fv(mProgram, loc, 1, GL_FALSE, matrix);
+}

@@ -27,6 +27,8 @@ public:
 	void cleanUp();
 
 	void registerUniform1i(const std::string& name,GLint value);
+	void registerUniform1f(const std::string& name, GLfloat value);
+	void registerUniformMatrix4f(const std::string& name, GLfloat* matrix);
 
 	inline GLuint GetShaderID() const
 	{

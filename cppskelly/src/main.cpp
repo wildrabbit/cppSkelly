@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/transform.hpp>
 #include <SDL.h>
 #include <SDL_image.h>
  
@@ -19,6 +20,9 @@
 
 //Define this somewhere in your header file
 #define BUFFER_OFFSET(i) ((void*)(i))
+
+const float DEG2RAD = M_PI / 180.0f;
+const float RAD2DEG = 1.0f / DEG2RAD;
 
 enum class PivotType
 {
@@ -267,6 +271,14 @@ void initGeometry(Sprite* sprite)
 
 }
 
+void updateMatrixSprite(Sprite* sprite)
+{
+	sprite->modelMatrix = glm::scale(glm::vec3(sprite->scale.x, sprite->scale.y, 1.0f))
+		* glm::rotate(sprite->angle, glm::vec3(0.0f, 0.0f, 1.0f))
+		* glm::translate(glm::vec3(sprite->pos.x, sprite->pos.y, 0.0f));
+	
+}
+
 void updateGeometry(Sprite* sprite)
 {
 	sprite->vertices[0][0] = -sprite->pivot.x;
@@ -386,7 +398,34 @@ void setPivotType(Sprite* sprite, PivotType pivotType, bool update = true)
 	}
 	setCustomPivot(sprite, &v, update);
 }
+void initSprite(Sprite* sprite, const std::string& texPath, const std::string& shaderName)
+{
+	sprite->texPath = texPath;
+	sprite->shaderName = shaderName;
+	unsigned int texWidth;
+	unsigned int texHeight;
+	loadTexture(sprite->texPath, sprite->texID, texWidth, texHeight);
 
+	sprite->width = (float)texWidth;
+	sprite->height = (float)texHeight;
+
+	setPivotType(sprite, PivotType::Custom, false);
+
+	initGeometry(sprite);
+
+	TShaderTableIter it = gShaders.find(sprite->shaderName);
+	if (it == gShaders.end())
+	{
+		logError("Shader not found!!");
+	}
+	else
+	{
+		sprite->shaderID = it->second.GetShaderID();
+	}
+	glCreateSamplers(1, &sprite->samplerID);
+
+	updateMatrixSprite(sprite);
+}
 
 
 void initSprite(Sprite* sprite, const std::string& texPath, const std::string& shaderName, float w, float h)
@@ -414,6 +453,8 @@ void initSprite(Sprite* sprite, const std::string& texPath, const std::string& s
 		sprite->shaderID = it->second.GetShaderID();
 	}
 	glCreateSamplers(1, &sprite->samplerID);
+
+	updateMatrixSprite(sprite);
 }
 
 void cleanupSprite(Sprite* sprite)
@@ -481,6 +522,10 @@ void renderSprite(OrthoCamera* cam, Sprite* sprite)
 		return;
 	}
 
+	glm::vec4 pos = mvp * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+	pos = mvp * glm::vec4(0.0f, 60.0f, 0.0f, 1.0f);
+	pos = mvp * glm::vec4(-50.0f, 60.0f, 0.0f, 1.0f);
+
 	Shader shader = shaderIt->second;
 	shader.bindAttributeLocation(SPRITE_VBO_ATTR_POS, "inPos");
 	shader.bindAttributeLocation(SPRITE_VBO_ATTR_UV, "inTexCoord");
@@ -491,6 +536,7 @@ void renderSprite(OrthoCamera* cam, Sprite* sprite)
 	glBindSampler(TEX_UNIT, sprite->samplerID);
 
 	shader.registerUniform1i("texture", 0);
+	shader.registerUniformMatrix4f("pvm", (GLfloat*)glm::value_ptr(mvp));	
 	shader.useProgram();
 
 	if (sprite->alphaBlend)
@@ -518,8 +564,8 @@ void renderSprite(OrthoCamera* cam, Sprite* sprite)
 }
 
 static const int SCREEN_FULLSCREEN = 0;
-static const int SCREEN_WIDTH  = 960;
-static const int SCREEN_HEIGHT = 540;
+static const int SCREEN_WIDTH  = 800;
+static const int SCREEN_HEIGHT = 600;
 static SDL_Window *window = nullptr;
 static SDL_GLContext maincontext;
 static OrthoCamera cam;
@@ -714,7 +760,7 @@ int main(int argc, char* args[])
 		return -1;
 	}
 
-	cam.eye = { 0.0f, 0.0f, 10.0f };
+	cam.eye = { 0.0f, 0.0f, 0.8f };
 	cam.target = { 0.0f, 0.0f, 0.0f };
 	cam.up = { 0.0f, 1.0f, 0.0f };
 	cam.left = -SCREEN_WIDTH/2;
@@ -730,9 +776,17 @@ int main(int argc, char* args[])
 	GLenum types[DEFAULT_SPRITE_SHADER_NUM_FILES] = { GL_VERTEX_SHADER, GL_FRAGMENT_SHADER };
 	createShader(DEFAULT_SHADER_NAME, fileNames, types, DEFAULT_SPRITE_SHADER_NUM_FILES);
 	
-	Sprite sprite("chara");
-	initSprite(&sprite, "data/textures/chara_b.png", DEFAULT_SHADER_NAME, 0.2f, 0.2f);
-	sprite.pos.x = sprite.pos.y = 0.0f;
+	static const std::string spriteName("chara");
+	static const std::string texPath("data/textures/chara_b.png");
+	Sprite sprite(spriteName);
+	initSprite(&sprite, texPath, DEFAULT_SHADER_NAME);
+	sprite.pos.x = -100.0f;
+	sprite.pos.y = 50.0f;
+	sprite.angle = 45.0f * DEG2RAD;
+	sprite.pos.y = 0.0f;
+	sprite.scale.x = 0.5f;
+	sprite.scale.y = 0.5f;
+	updateMatrixSprite(&sprite);
 	sprite.alphaBlend = true;
 	glm::vec2 zero;
 	setPivotType(&sprite, PivotType::Bottom);
