@@ -27,6 +27,11 @@ public:
 	void cleanUp();
 
 	void registerUniform1i(const std::string& name,GLint value);
+
+	inline GLuint GetShaderID() const
+	{
+		return mProgram;
+	}
 };
 
 #endif

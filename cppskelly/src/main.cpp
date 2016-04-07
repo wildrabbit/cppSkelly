@@ -15,96 +15,515 @@
 #include "logUtils.h"
 #include "Shader.h"
 
+#include <map>
+
+//Define this somewhere in your header file
+#define BUFFER_OFFSET(i) ((void*)(i))
+
+enum class PivotType
+{
+	TopLeft,
+	Top,
+	TopRight,
+	CentreLeft,
+	Centre,
+	CentreRight,
+	BotLeft,
+	Bottom,
+	BotRight,
+	Custom
+};
+
+struct Rect
+{
+	float x, y, w, h;
+
+	Rect() : x(0.0f), y(0.0f), w(0.0f), h(0.0f){}
+
+	inline bool empty()
+	{
+		return w < FLT_EPSILON || h < FLT_EPSILON;
+	}
+};
+
+
+struct Texture
+{
+	std::string path;
+	unsigned int texID;
+	unsigned int width;
+	unsigned int height;
+	int bpp;
+	GLenum texFormat;
+};
+
+
+typedef std::map<std::string, Texture> TTextureTable;
+typedef TTextureTable::iterator TTextureTableIter;
+typedef std::map<std::string, Shader> TShaderTable;
+typedef std::map<std::string, Shader>::iterator TShaderTableIter;
+
+TTextureTable gTextures;
+TShaderTable gShaders;
+
+bool loadTexture(const std::string& fileName, GLuint& texture, GLuint& width, GLuint& height)
+{
+	TTextureTableIter value = gTextures.find(fileName);
+	if (value != gTextures.end())
+	{
+		logInfo("Texture was already loaded!");
+		width = value->second.width;
+		height = value->second.height;
+		texture = value->second.texID;
+		return true;
+	}
+
+	SDL_Surface *surface = IMG_Load(fileName.c_str()); // this surface will tell us the details of the image
+
+	GLint nColors;
+	GLenum textureFormat;
+
+	if (surface)
+	{
+		// Check that the image’s width is a power of 2
+		if ((surface->w & (surface->w - 1)) != 0)
+		{
+			logInfo("Warning: image.bmp’s width is not a power of 2");
+		}
+
+		// Also check if the height is a power of 2
+		if ((surface->h & (surface->h - 1)) != 0)
+		{
+			logInfo("Warning: image.bmp’s height is not a power of 2");
+		}
+
+		//get number of channels in the SDL surface
+		nColors = surface->format->BytesPerPixel;
+
+		//contains an alpha channel
+		if (nColors == 4)
+		{
+			if (surface->format->Rmask == 0x000000ff)
+				textureFormat = GL_RGBA;
+			else
+				textureFormat = GL_BGRA;
+		}
+		else if (nColors == 3) //no alpha channel
+		{
+			if (surface->format->Rmask == 0x000000ff)
+				textureFormat = GL_RGB;
+			else
+				textureFormat = GL_BGR;
+		}
+		else
+		{
+			logInfo("warning: the image is not truecolor...this will break ");
+		}
+
+
+		glCreateTextures(GL_TEXTURE_2D, 1, &texture);
+		glTextureStorage2D(texture, 1, GL_RGBA8, surface->w, surface->h);
+		glTextureParameteri(texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTextureParameteri(texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTextureSubImage2D(texture, 0, 0, 0, surface->w, surface->h, textureFormat, GL_UNSIGNED_BYTE, surface->pixels);
+
+		width = surface->w;
+		height = surface->h;
+
+		Texture t;
+		t.path = fileName;
+		t.width = surface->w;
+		t.height = surface->h;
+		t.bpp = nColors;
+		t.texID = texture;
+		t.texFormat = textureFormat;
+		gTextures[t.path] = t;
+	}
+	else
+	{
+		std::ostringstream sstream;
+		sstream << "LoadTexture:: Could not load " << fileName.c_str() << ": " << SDL_GetError();
+		logError(sstream.str().c_str());
+
+		return false;
+	}
+
+	// Free the SDL_Surface only if it was successfully created
+	if (surface) {
+		SDL_FreeSurface(surface);
+	}
+
+	return true;
+}
+
+
+// Forget about batching for now
+const int NUM_SPRITE_VBO = 2;
+const int NUM_SPRITE_VAO = 1;
+const int NUM_SPRITE_TRIANGLES_VERT_COUNT = 4;
+const int NUM_SPRITE_TRIANGLES_IDX_COUNT = 6;
+const int SPRITE_VBO_ATTR_POS = 0;
+const int SPRITE_VBO_ATTR_UV = 1;
+
+const int SPRITE_FLOATS_PER_VERTEX = 2;
+const int SPRITE_FLOATS_PER_UV = 2;
+
+const char* DEFAULT_SHADER_NAME = "sprites_default";
+
+struct Sprite
+{
+	std::string name;
+	std::string texPath;
+	std::string shaderName;
+	Rect clipRect;
+	unsigned int texID;
+	unsigned int shaderID;
+	unsigned int samplerID;
+	glm::vec2 pos;
+	glm::vec2 scale;
+	float width;
+	float height;
+	float angle;
+
+	glm::vec2 pivot;
+	glm::mat4 modelMatrix;
+
+	bool alphaBlend;
+	
+	GLfloat vertices[NUM_SPRITE_TRIANGLES_VERT_COUNT][SPRITE_FLOATS_PER_VERTEX];
+	GLfloat uvs[NUM_SPRITE_TRIANGLES_VERT_COUNT][SPRITE_FLOATS_PER_UV];
+
+	unsigned int indexes[NUM_SPRITE_TRIANGLES_IDX_COUNT];
+	unsigned int vaoID;
+	unsigned int vboIDs[NUM_SPRITE_VBO];
+	unsigned int eboID;
+
+	Sprite(const std::string& name)
+		:name(name)
+		,texPath() ,shaderName()
+		,texID(0), shaderID(0), samplerID(0)
+		,clipRect()
+		,width(0.0f), height(0.0f), angle(0.0f)
+		,pos(), scale(1.0f, 1.0f)
+		,pivot(), modelMatrix(), alphaBlend(false)
+	{}
+
+};
+
+void initGeometry(Sprite* sprite)
+{
+	sprite->vertices[0][0] = -sprite->pivot.x;
+	sprite->vertices[0][1] = -sprite->pivot.y;
+	sprite->vertices[1][0] = sprite->width - sprite->pivot.x;
+	sprite->vertices[1][1] = sprite->height - sprite->pivot.y;
+	sprite->vertices[2][0] = -sprite->pivot.x;
+	sprite->vertices[2][1] = sprite->height - sprite->pivot.y;
+	sprite->vertices[3][0] = sprite->width - sprite->pivot.x;
+	sprite->vertices[3][1] = -sprite->pivot.y;
+
+	sprite->indexes[0] = 0;
+	sprite->indexes[1] = 1;
+	sprite->indexes[2] = 2;
+	sprite->indexes[3] = 0;
+	sprite->indexes[4] = 3;
+	sprite->indexes[5] = 1;
+
+	sprite->uvs[0][0] = 0.0f;
+	sprite->uvs[0][1] = 1.0f;
+	sprite->uvs[1][0] = 1.0f;
+	sprite->uvs[1][1] = 0.0f;
+	sprite->uvs[2][0] = 0.0f;
+	sprite->uvs[2][1] = 0.0f;
+	sprite->uvs[3][0] = 1.0f;
+	sprite->uvs[3][1] = 1.0f;
+
+	glCreateVertexArrays(NUM_SPRITE_VAO, &(sprite->vaoID));
+	glBindVertexArray(sprite->vaoID); // current vtex array
+
+	glCreateBuffers(NUM_SPRITE_VBO, sprite->vboIDs);
+
+	// pos
+	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_POS]);
+	glBufferData(GL_ARRAY_BUFFER, (NUM_SPRITE_TRIANGLES_VERT_COUNT * SPRITE_FLOATS_PER_VERTEX) * sizeof(GLfloat), sprite->vertices, GL_DYNAMIC_DRAW);
+
+	glVertexAttribPointer(SPRITE_VBO_ATTR_POS, SPRITE_FLOATS_PER_VERTEX, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0)); // Coord. info => Atr. index #0, three floats/vtx
+	glEnableVertexAttribArray(SPRITE_VBO_ATTR_POS);
+
+
+	// UVS
+	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_UV]);
+	glBufferData(GL_ARRAY_BUFFER, (NUM_SPRITE_TRIANGLES_VERT_COUNT * SPRITE_FLOATS_PER_UV) * sizeof(GLfloat), sprite->uvs, GL_DYNAMIC_DRAW);
+
+	glVertexAttribPointer(SPRITE_VBO_ATTR_UV, SPRITE_FLOATS_PER_UV, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
+	glEnableVertexAttribArray(SPRITE_VBO_ATTR_UV);
+
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+	// Indexes
+	glCreateBuffers(1, &sprite->eboID);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sprite->eboID);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, (NUM_SPRITE_TRIANGLES_IDX_COUNT)* sizeof(GLuint), sprite->indexes, GL_STATIC_DRAW);
+
+
+}
+
+void updateGeometry(Sprite* sprite)
+{
+	sprite->vertices[0][0] = -sprite->pivot.x;
+	sprite->vertices[0][1] = -sprite->pivot.y;
+	sprite->vertices[1][0] = sprite->width - sprite->pivot.x;
+	sprite->vertices[1][1] = sprite->height - sprite->pivot.y;
+	sprite->vertices[2][0] = -sprite->pivot.x;
+	sprite->vertices[2][1] = sprite->height - sprite->pivot.y;
+	sprite->vertices[3][0] = sprite->width - sprite->pivot.x;
+	sprite->vertices[3][1] = -sprite->pivot.y;
+
+	glBindVertexArray(sprite->vaoID); // current vtex array
+	// pos
+	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_POS]);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(sprite->vertices), sprite->vertices);
+	glVertexAttribPointer(SPRITE_VBO_ATTR_POS, SPRITE_FLOATS_PER_VERTEX, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, three floats/vtx
+
+
+	if (!sprite->clipRect.empty())
+	{
+		Texture tex = gTextures[sprite->texPath];
+		float clipX1Ratio = sprite->clipRect.x / tex.width;
+		float clipY1Ratio = sprite->clipRect.y / tex.height;
+		float clipX2Ratio = clipX1Ratio + sprite->clipRect.w / tex.width;
+		float clipY2Ratio = clipY1Ratio + sprite->clipRect.h / tex.height;
+		sprite->uvs[0][0] = clipX1Ratio;
+		sprite->uvs[0][1] = clipY2Ratio;
+		sprite->uvs[1][0] = clipX2Ratio;
+		sprite->uvs[1][1] = clipY1Ratio;
+		sprite->uvs[2][0] = clipX1Ratio;
+		sprite->uvs[2][1] = clipY1Ratio;
+		sprite->uvs[3][0] = clipX2Ratio;
+		sprite->uvs[3][1] = clipY2Ratio;
+	}
+	else
+	{
+		sprite->uvs[0][0] = 0.0f;
+		sprite->uvs[0][1] = 1.0f;
+		sprite->uvs[1][0] = 1.0f;
+		sprite->uvs[1][1] = 0.0f;
+		sprite->uvs[2][0] = 0.0f;
+		sprite->uvs[2][1] = 0.0f;
+		sprite->uvs[3][0] = 1.0f;
+		sprite->uvs[3][1] = 1.0f;
+	}
+
+	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_UV]);
+	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(sprite->uvs), sprite->uvs);
+	glVertexAttribPointer(SPRITE_VBO_ATTR_UV, SPRITE_FLOATS_PER_UV, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, three floats/vtx
+
+	//Indexes will not change
+}
+
+void setCustomPivot(Sprite* sprite, glm::vec2* pivot, bool update = true)
+{
+	sprite->pivot.x = pivot->x;
+	sprite->pivot.y = pivot->y;
+	if (update)
+		updateGeometry(sprite);
+}
+
+void setPivotType(Sprite* sprite, PivotType pivotType, bool update = true)
+{
+	glm::vec2 v = { 0.0f, 0.0f };
+	switch (pivotType)
+	{
+	case PivotType::TopLeft:
+	{
+		v.y = sprite->height;
+		break;
+	}
+	case PivotType::Top:
+	{
+		v.x = sprite->width * 0.5f;
+		v.y = sprite->height;
+		break;
+	}
+	case PivotType::TopRight:
+	{
+		v.x = sprite->width;
+		v.y = sprite->height;
+		break;
+	}
+	case PivotType::CentreLeft:
+	{
+		v.y = sprite->height * 0.5f;
+		break;
+	}
+	case PivotType::Centre:
+	{
+		v.x = sprite->width * 0.5f;
+		v.y = sprite->height * 0.5f;
+		break;
+	}
+	case PivotType::CentreRight:
+	{
+		v.x = sprite->width;
+		v.y = sprite->height * 0.5f;
+		break;
+	}
+	case PivotType::BotLeft:
+	{
+		break;
+	}
+	case PivotType::Bottom:
+	{
+		v.x = sprite->width * 0.5f;
+		break;
+	}
+	case PivotType::BotRight:
+	{
+		v.x = sprite->width;
+		break;
+	}
+	default:
+		break;
+	}
+	setCustomPivot(sprite, &v, update);
+}
+
+
+
+void initSprite(Sprite* sprite, const std::string& texPath, const std::string& shaderName, float w, float h)
+{
+	sprite->texPath = texPath;
+	sprite->shaderName = shaderName;
+	unsigned int texWidth;
+	unsigned int texHeight;
+	loadTexture(sprite->texPath, sprite->texID, texWidth, texHeight);	
+
+	sprite->width = w;
+	sprite->height = h;
+
+	setPivotType(sprite, PivotType::Custom, false);
+
+	initGeometry(sprite);
+
+	TShaderTableIter it = gShaders.find(sprite->shaderName);
+	if (it == gShaders.end())
+	{
+		logError("Shader not found!!");
+	}
+	else
+	{
+		sprite->shaderID = it->second.GetShaderID();
+	}
+	glCreateSamplers(1, &sprite->samplerID);
+}
+
+void cleanupSprite(Sprite* sprite)
+{
+	glDisableVertexAttribArray(0);
+	glDeleteBuffers(NUM_SPRITE_VBO, sprite->vboIDs);
+	glDeleteBuffers(1, &sprite->eboID);
+	glDeleteVertexArrays(NUM_SPRITE_VAO, &sprite->vaoID);
+	glDeleteSamplers(1, &sprite->samplerID);
+}
+
+
+
+struct OrthoCamera
+{
+	glm::vec3 eye;
+	glm::vec3 up;
+	glm::vec3 target;
+
+	float left;
+	float right;
+	float top;
+	float bot;
+	float zNear;
+	float zFar;
+	
+	glm::mat4 viewMatrix;
+	glm::mat4 projMatrix;
+};
+
+void initCamera(OrthoCamera* cam)
+{
+	cam->viewMatrix = glm::lookAt(cam->eye, cam->target, cam->up);
+	cam->projMatrix = glm::ortho(cam->left, cam->right, cam->bot, cam->top, cam->zNear, cam->zFar);
+}
+
+//void rotateCamera(OrthoCamera* cam, const glm::vec3& axis, float angle)
+//{
+//	cam->viewMatrix = rotate(cam->viewMatrix, angle, axis);
+//	cam->up = cam->up * glm::rotate(glm::mat4(1.0f), angle, axis);
+//	cam->target = rotate(cam->target, angle, axis);
+//}
+//
+//void translateCamera(OrthoCamera* cam, const glm::vec3& translationVector)
+//{
+//	cam->viewMatrix = translate(cam->viewMatrix, translationVector);
+//	cam->eye = translate(cam->eye, translationVector);
+//	cam->target = translate(cam->eye)
+//}
+//
+//void zoomCamera(OrthoCamera* cam, float value)
+//{
+//	float newWidth = (cam->right - cam->left) / value;
+//	cam->left = 
+//}
+
+void renderSprite(OrthoCamera* cam, Sprite* sprite)
+{
+	glm::mat4 mvp = cam->projMatrix * cam->viewMatrix * sprite->modelMatrix;
+	// Pass matrices, setup shader params, etc
+	TShaderTableIter shaderIt = gShaders.find(sprite->shaderName);
+	if (shaderIt == gShaders.end())
+	{
+		logError("Shader not found!!");
+		return;
+	}
+
+	Shader shader = shaderIt->second;
+	shader.bindAttributeLocation(SPRITE_VBO_ATTR_POS, "inPos");
+	shader.bindAttributeLocation(SPRITE_VBO_ATTR_UV, "inTexCoord");
+
+	const int TEX_UNIT = 0;
+	glActiveTexture(GL_TEXTURE0 + TEX_UNIT); // The 0 addition seems to be a convention to specify the texture unit
+	glBindTexture(GL_TEXTURE_2D, sprite->texID);
+	glBindSampler(TEX_UNIT, sprite->samplerID);
+
+	shader.registerUniform1i("texture", 0);
+	shader.useProgram();
+
+	if (sprite->alphaBlend)
+	{
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	}
+	else
+	{
+		glDisable(GL_BLEND);
+	}
+
+	glBindVertexArray(sprite->vaoID);
+	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_POS]);
+	glVertexAttribPointer(SPRITE_VBO_ATTR_POS, SPRITE_FLOATS_PER_VERTEX, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, three floats/vtx
+	glEnableVertexAttribArray(SPRITE_VBO_ATTR_POS);
+	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_UV]);
+	glVertexAttribPointer(SPRITE_VBO_ATTR_UV, SPRITE_FLOATS_PER_UV, GL_FLOAT, GL_FALSE, 0, 0);
+	glEnableVertexAttribArray(SPRITE_VBO_ATTR_UV);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sprite->eboID);
+
+	//glDrawArrays(GL_TRIANGLES, 0, NUM_SPRITE_TRIANGLES_VERT_COUNT);
+	glDrawElements(GL_TRIANGLES, NUM_SPRITE_TRIANGLES_IDX_COUNT, GL_UNSIGNED_INT, nullptr);	
+	//glDrawArrays(GL_TRIANGLES, 0, NUM_SPRITE_TRIANGLES_VERT_COUNT);
+}
 
 static const int SCREEN_FULLSCREEN = 0;
 static const int SCREEN_WIDTH  = 960;
 static const int SCREEN_HEIGHT = 540;
 static SDL_Window *window = nullptr;
 static SDL_GLContext maincontext;
- 
-//// Our object has 4 points
-//const GLuint points = 12;
-//
-//// Each poin has three values ( x, y, z)
-//const GLuint floatsPerPoint = 3;
-//
-//// Each color has 4 values ( red, green, blue, alpha )
-//const GLuint floatsPerColor = 4;
-//
-//// This is the object we'll draw ( a simple square
-//const GLfloat diamond[points][floatsPerPoint] = {
-//	{ 0.2f, 0.2f, 0.5f }, // Top right
-//	{ -0.2f, 0.2f, 0.5f }, // Top left
-//	{ 0.0f, 0.0f, 0.5f }, // Center
-//
-//	{ 0.2f, 0.2f, 0.5f }, // Top right
-//	{ 0.2f, -0.2f, 0.5f }, // Bottom right 
-//	{ 0.0f, 0.0f, 0.5f }, // Center
-//
-//	{ -0.2f, -0.2f, 0.5f }, // Bottom left
-//	{ 0.2f, -0.2f, 0.5f }, // Bottom right 
-//	{ 0.0f, 0.0f, 0.5f }, // Center
-//
-//	{ -0.2f, -0.2f, 0.5f }, // Bottom left
-//	{ -0.2f, 0.2f, 0.5f }, // Top left
-//	{ 0.0f, 0.0f, 0.5f }, // Center
-//};
-//
-//// This is the object we'll draw ( a simple square
-//const GLfloat colors[points][floatsPerColor] = {
-//	{ 0.5f, 0.5f, 0.5f, 1.0f }, // Top right
-//	{ 0.5f, 0.5f, 0.5f, 1.0f }, // Bottom right 
-//	{ 0.0f, 0.0f, 0.0f, 1.0f }, // Center
-//
-//	{ 0.5f, 0.5f, 0.5f, 1.0f }, // Top left
-//	{ 0.5f, 0.5f, 0.5f, 1.0f }, // Top right
-//	{ 0.0f, 0.0f, 0.0f, 1.0f }, // Center
-//
-//	{ 0.5f, 0.5f, 0.5f, 1.0f }, // Bottom left
-//	{ 0.5f, 0.5f, 0.5f, 1.0f }, // Bottom right 
-//	{ 0.0f, 0.0f, 0.0f, 1.0f }, // Center
-//
-//	{ 0.5f, 0.5f, 0.5f, 1.0f }, // Bottom left
-//	{ 0.5f, 0.5f, 0.5f, 1.0f }, // Top left
-//	{ 0.0f, 0.0f, 0.0f, 1.0f }, // Center
-//};
+static OrthoCamera cam;
 
-// Our object has 4 points
-const uint32_t points = 6;
-
-// Each poin has three values ( x, y, z)
-const uint32_t floatsPerPoint = 3;
-
-// Each color has 4 values ( red, green, blue, alpha )
-const uint32_t floatsPerUV= 2;
-
-// This is the object we'll draw ( a simple square
-const GLfloat diamond[points][floatsPerPoint] = {
-	{ -0.5, -0.5, 0.5 }, // Bottom left
-	{ 0.5, 0.5, 0.5 }, // Top right
-	{ -0.5, 0.5, 0.5 }, // Top left
-	{ -0.5, -0.5, 0.5 }, // Bottom left
-	{ 0.5, -0.5, 0.5 }, // Bottom right 
-	{ 0.5, 0.5, 0.5 }, // Top right
-};
-
-// This is the object we'll draw ( a simple square
-const GLfloat texCoords[points][floatsPerUV] = {
-	{ 0.0f, 1.0f }, // Bottom left
-	{ 1.0f, 0.0f }, // Top right
-	{ 0.0f, 0.0f }, // Top left
-	{ 0.0f, 1.0f }, // Bottom left
-	{ 1.0f, 1.0f }, // Bottom right 
-	{ 1.0f, 0.0f}, // Top right
-};
-
-
-// Create variables for storing the ID of our VAO and VBO
-GLuint vbo[2], vao[1];
-
-// The positons of the position and color data within the VAO 
-// (It's important to keep the shader params bound to the attribute in the same order as the indexes)
-const GLuint positionAttributeIndex = 0, texCoordAttributeIndex = 1;
 
 static void APIENTRY openglCallbackFunction( GLenum source, GLenum type,
   GLuint id, GLenum severity, GLsizei length,
@@ -212,14 +631,15 @@ bool init(const char * caption, bool fullscreen, int windowWidth, int windowHeig
 	return true;
 }
 
-void close(SDL_Window* window, SDL_GLContext context, Shader* s)
+void close(SDL_Window* window, SDL_GLContext context, Sprite* sprite)
 {
 	// Cleanup all the things we bound and allocated
-	s->cleanUp();
+	for (TShaderTableIter it = gShaders.begin(); it != gShaders.end(); ++it)
+	{
+		it->second.cleanUp();
+	}
 
-	glDisableVertexAttribArray(0);
-	glDeleteBuffers(1, vbo);
-	glDeleteVertexArrays(1, vao);
+	cleanupSprite(sprite);
 
 	// Delete our OpengL context
 	SDL_GL_DeleteContext(context);
@@ -232,27 +652,6 @@ void close(SDL_Window* window, SDL_GLContext context, Shader* s)
 }
 
 
-void initGeometry()
-{
-	glCreateBuffers(2, vbo);
-	glCreateVertexArrays(1, vao);
-	glBindVertexArray(vao[0]); // current vtex array
-
-	// pos
-	glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
-	glBufferData(GL_ARRAY_BUFFER, (points * floatsPerPoint) * sizeof(GLfloat), diamond, GL_STATIC_DRAW);
-
-	glVertexAttribPointer(positionAttributeIndex, floatsPerPoint, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, three floats/vtx
-
-	// UVS
-	glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
-	glBufferData(GL_ARRAY_BUFFER, (points * floatsPerUV) * sizeof(GLfloat), texCoords, GL_STATIC_DRAW);
-
-	glVertexAttribPointer(texCoordAttributeIndex, floatsPerUV, GL_FLOAT, GL_FALSE, 0, 0);
-
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-}
-
 float switchTimeout;
 bool drawLine;
 void update(float dt)
@@ -260,28 +659,27 @@ void update(float dt)
 
 }
 
-void render(SDL_Window* window, Shader* s, GLuint texID, GLuint samplerID)
+
+bool createShader(const std::string& name, const char* files[], GLenum* types, int numFiles)
+{
+	Shader s;
+	if (!s.init(files, types, numFiles))
+	{
+		logError("Shader init failed");
+		int i;
+		std::cin >> i;
+		return false;
+	}
+	gShaders[name] = s;
+	return true;
+}
+
+void render(SDL_Window* window, OrthoCamera* c, Sprite* s)
 {
 	glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	s->bindAttributeLocation(positionAttributeIndex, "inPos");
-	s->bindAttributeLocation(texCoordAttributeIndex, "inTexCoord");
-
-	glActiveTexture(GL_TEXTURE0 + 0);
-	glBindTexture(GL_TEXTURE_2D, texID);
-	glBindSampler(0, samplerID);
-	s->registerUniform1i("texture",0);
-	s->useProgram();
-
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-	glBindVertexArray(vao[0]);
-	glEnableVertexAttribArray(positionAttributeIndex);
-	glEnableVertexAttribArray(texCoordAttributeIndex);
-	
-	glDrawArrays(GL_TRIANGLES, 0, points);
+	renderSprite(c, s);
 
 	SDL_GL_SwapWindow(window);
 }
@@ -309,75 +707,6 @@ void handleEvents(SDL_Event& event, bool& quit)
 	}
 }
 
-bool loadTexture(const std::string& fileName, GLuint& texture, GLuint& width, GLuint& height)
-{
-	SDL_Surface *surface = IMG_Load(fileName.c_str()); // this surface will tell us the details of the image
-
-	GLint nColors;
-	GLenum textureFormat;
-
-	if (surface)
-	{
-		// Check that the image’s width is a power of 2
-		if ((surface->w & (surface->w - 1)) != 0) 
-		{
-			logInfo("Warning: image.bmp’s width is not a power of 2");
-		}
-
-		// Also check if the height is a power of 2
-		if ((surface->h & (surface->h - 1)) != 0) 
-		{
-			logInfo("Warning: image.bmp’s height is not a power of 2");
-		}
-
-		//get number of channels in the SDL surface
-		nColors = surface->format->BytesPerPixel;
-
-		//contains an alpha channel
-		if (nColors == 4)
-		{
-			if (surface->format->Rmask == 0x000000ff)
-				textureFormat = GL_RGBA;
-			else
-				textureFormat = GL_BGRA;
-		}
-		else if (nColors == 3) //no alpha channel
-		{
-			if (surface->format->Rmask == 0x000000ff)
-				textureFormat = GL_RGB;
-			else
-				textureFormat = GL_BGR;
-		}
-		else
-		{
-			logInfo("warning: the image is not truecolor...this will break ");
-		}
-
-		glCreateTextures(GL_TEXTURE_2D, 1, &texture);
-		glTextureStorage2D(texture, 1, GL_RGBA8, surface->w, surface->h);
-		glTextureParameteri(texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTextureParameteri(texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTextureSubImage2D(texture, 0, 0, 0, surface->w, surface->h, textureFormat, GL_UNSIGNED_BYTE, surface->pixels);
-
-		width = surface->w;
-		height = surface->h;
-	}
-	else {
-		std::ostringstream sstream;
-		sstream << "LoadTexture:: Could not load " << fileName.c_str() << ": " << SDL_GetError();
-		logError(sstream.str().c_str());
-
-		return false;
-	}
-
-	// Free the SDL_Surface only if it was successfully created
-	if (surface) {
-		SDL_FreeSurface(surface);
-	}
-
-	return true;
-}
-
 int main(int argc, char* args[])
 {
 	if (!init("OpenGL 4.5", false, 800, 600))
@@ -385,30 +714,29 @@ int main(int argc, char* args[])
 		return -1;
 	}
 
-	GLuint texture;
-	GLuint width, height;
-	loadTexture("data/textures/chara_b.png", texture, width, height);
+	cam.eye = { 0.0f, 0.0f, 10.0f };
+	cam.target = { 0.0f, 0.0f, 0.0f };
+	cam.up = { 0.0f, 1.0f, 0.0f };
+	cam.left = -SCREEN_WIDTH/2;
+	cam.right = SCREEN_WIDTH/2;
+	cam.top = SCREEN_HEIGHT/2;
+	cam.bot = -SCREEN_HEIGHT/2;
+	cam.zNear = 1.0f;
+	cam.zFar = -1.0f;
+	initCamera(&cam);
 
-	initGeometry();
-
-	GLuint samplerID;
-	glCreateSamplers(1, &samplerID);
-
-	Shader s;
-
-	/*const int numShaders = 3;
-	const char* fileNames[numShaders] = { "data/shader/test.vert", "data/shader/test.geom", "data/shader/test.frag" };*/
-	const int numShaders = 2;
-	const char* fileNames[numShaders] = { "data/shader/text.vert", "data/shader/text.frag" };
-	GLenum shaderTypes[numShaders] = { GL_VERTEX_SHADER, GL_FRAGMENT_SHADER };
-	if (!s.init(fileNames, shaderTypes, numShaders))
-	{
-		logError("Shader init failed");
-		int i;
-		std::cin >> i;
-		return 1;
-	}
-  
+	const int DEFAULT_SPRITE_SHADER_NUM_FILES = 2;
+	const char* fileNames[DEFAULT_SPRITE_SHADER_NUM_FILES] = { "data/shader/text.vert", "data/shader/text.frag" };
+	GLenum types[DEFAULT_SPRITE_SHADER_NUM_FILES] = { GL_VERTEX_SHADER, GL_FRAGMENT_SHADER };
+	createShader(DEFAULT_SHADER_NAME, fileNames, types, DEFAULT_SPRITE_SHADER_NUM_FILES);
+	
+	Sprite sprite("chara");
+	initSprite(&sprite, "data/textures/chara_b.png", DEFAULT_SHADER_NAME, 0.2f, 0.2f);
+	sprite.pos.x = sprite.pos.y = 0.0f;
+	sprite.alphaBlend = true;
+	glm::vec2 zero;
+	setPivotType(&sprite, PivotType::Bottom);
+	
 	SDL_Event event;
 	bool quit = false;
 	
@@ -425,10 +753,10 @@ int main(int argc, char* args[])
 		start = end;
 		handleEvents(event, quit);
 		update(elapsedSeconds);
-		render(window, &s, texture, samplerID);
+		render(window, &cam, &sprite);
 	}
 
-	close(window, maincontext, &s);
+	close(window, maincontext, &sprite);
 	return 0;
 }
 
