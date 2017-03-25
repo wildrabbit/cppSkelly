@@ -4,6 +4,8 @@
 #include "Shader.h"
 #include "logUtils.h"
 
+TShaderTable gShaders;
+
 Shader::Shader()
 {}
 

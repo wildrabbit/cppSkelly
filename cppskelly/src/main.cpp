@@ -6,133 +6,30 @@
 
 #define GLM_SWIZZLE 
 #define GLM_FORCE_RADIANS 1
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/transform.hpp>
 #include <SDL.h>
 #include <SDL_image.h>
- 
+#include <map>
+
 #include "glad/glad.h"
-#include "logUtils.h"
-#include "Shader.h"
+#include "Drawable.h"
 #include "GeomUtils.h"
 
-#include <map>
+#include "logUtils.h"
+#include "Shader.h"
+#include "Camera.h"
+#include "Line.h"
+#include "Texture.h"
+
 
 //Define this somewhere in your header file
 #define BUFFER_OFFSET(i) ((void*)(i))
 
-
-struct Texture
-{
-	std::string path;
-	unsigned int texID;
-	unsigned int width;
-	unsigned int height;
-	int bpp;
-	GLenum texFormat;
-};
-
-
-typedef std::map<std::string, Texture> TTextureTable;
-typedef TTextureTable::iterator TTextureTableIter;
-typedef std::map<std::string, Shader> TShaderTable;
-typedef std::map<std::string, Shader>::iterator TShaderTableIter;
-
 TTextureTable gTextures;
-TShaderTable gShaders;
-
-bool loadTexture(const std::string& fileName, GLuint& texture, GLuint& width, GLuint& height)
-{
-	TTextureTableIter value = gTextures.find(fileName);
-	if (value != gTextures.end())
-	{
-		logInfo("Texture was already loaded!");
-		width = value->second.width;
-		height = value->second.height;
-		texture = value->second.texID;
-		return true;
-	}
-
-	SDL_Surface *surface = IMG_Load(fileName.c_str()); // this surface will tell us the details of the image
-
-	GLint nColors;
-	GLenum textureFormat;
-
-	if (surface)
-	{
-		// Check that the image’s width is a power of 2
-		if ((surface->w & (surface->w - 1)) != 0)
-		{
-			logInfo("Warning: image.bmp’s width is not a power of 2");
-		}
-
-		// Also check if the height is a power of 2
-		if ((surface->h & (surface->h - 1)) != 0)
-		{
-			logInfo("Warning: image.bmp’s height is not a power of 2");
-		}
-
-		//get number of channels in the SDL surface
-		nColors = surface->format->BytesPerPixel;
-
-		//contains an alpha channel
-		if (nColors == 4)
-		{
-			if (surface->format->Rmask == 0x000000ff)
-				textureFormat = GL_RGBA;
-			else
-				textureFormat = GL_BGRA;
-		}
-		else if (nColors == 3) //no alpha channel
-		{
-			if (surface->format->Rmask == 0x000000ff)
-				textureFormat = GL_RGB;
-			else
-				textureFormat = GL_BGR;
-		}
-		else
-		{
-			logInfo("warning: the image is not truecolor...this will break ");
-		}
-
-
-		glCreateTextures(GL_TEXTURE_2D, 1, &texture);
-		glTextureStorage2D(texture, 1, GL_RGBA8, surface->w, surface->h);
-		glTextureParameteri(texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTextureParameteri(texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTextureSubImage2D(texture, 0, 0, 0, surface->w, surface->h, textureFormat, GL_UNSIGNED_BYTE, surface->pixels);
-
-		width = surface->w;
-		height = surface->h;
-
-		Texture t;
-		t.path = fileName;
-		t.width = surface->w;
-		t.height = surface->h;
-		t.bpp = nColors;
-		t.texID = texture;
-		t.texFormat = textureFormat;
-		gTextures[t.path] = t;
-	}
-	else
-	{
-		std::ostringstream sstream;
-		sstream << "LoadTexture:: Could not load " << fileName.c_str() << ": " << SDL_GetError();
-		logError(sstream.str().c_str());
-
-		return false;
-	}
-
-	// Free the SDL_Surface only if it was successfully created
-	if (surface) {
-		SDL_FreeSurface(surface);
-	}
-
-	return true;
-}
-
 
 // Forget about batching for now
 const int NUM_SPRITE_VBO = 2;
@@ -147,7 +44,7 @@ const int SPRITE_FLOATS_PER_UV = 2;
 
 const char* DEFAULT_SHADER_NAME = "sprites_default";
 
-struct Sprite
+struct Sprite: public Drawable
 {
 	std::string name;
 	std::string texPath;
@@ -190,7 +87,58 @@ struct Sprite
 		,pivot(), modelMatrix(), alphaBlend(false)
 	{}
 
+	void draw(SDL_Window* w, Camera* c) override;
+	void cleanup() override;
+
 };
+
+void Sprite::draw(SDL_Window* w, Camera* cam)
+{
+	glm::mat4 mvp = cam->projMatrix * cam->viewMatrix * modelMatrix;
+	// Pass matrices, setup shader params, etc
+	TShaderTableIter shaderIt = gShaders.find(shaderName);
+	if (shaderIt == gShaders.end())
+	{
+		logError("Shader not found!!");
+		return;
+	}
+
+	Shader shader = shaderIt->second;
+	shader.bindAttributeLocation(SPRITE_VBO_ATTR_POS, "inPos");
+	shader.bindAttributeLocation(SPRITE_VBO_ATTR_UV, "inTexCoord");
+
+	const int TEX_UNIT = 0;
+	glActiveTexture(GL_TEXTURE0 + TEX_UNIT); // The 0 addition seems to be a convention to specify the texture unit
+	glBindTexture(GL_TEXTURE_2D, texID);
+	glBindSampler(TEX_UNIT, samplerID);
+
+	shader.registerUniform1i("texture", 0);
+	shader.registerUniformMatrix4f("mvp", (GLfloat*)glm::value_ptr(mvp));
+	shader.useProgram();
+
+	if (alphaBlend)
+	{
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	}
+	else
+	{
+		glDisable(GL_BLEND);
+	}
+
+	glBindVertexArray(vaoID);
+	glBindBuffer(GL_ARRAY_BUFFER, vboIDs[SPRITE_VBO_ATTR_POS]);
+	glVertexAttribPointer(SPRITE_VBO_ATTR_POS, SPRITE_FLOATS_PER_VERTEX, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, three floats/vtx
+	glEnableVertexAttribArray(SPRITE_VBO_ATTR_POS);
+	glBindBuffer(GL_ARRAY_BUFFER, vboIDs[SPRITE_VBO_ATTR_UV]);
+	glVertexAttribPointer(SPRITE_VBO_ATTR_UV, SPRITE_FLOATS_PER_UV, GL_FLOAT, GL_FALSE, 0, 0);
+	glEnableVertexAttribArray(SPRITE_VBO_ATTR_UV);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eboID);
+
+	//glDrawArrays(GL_TRIANGLES, 0, NUM_SPRITE_TRIANGLES_VERT_COUNT);
+	glDrawElements(GL_TRIANGLES, NUM_SPRITE_TRIANGLES_IDX_COUNT, GL_UNSIGNED_INT, nullptr);
+	//glDrawArrays(GL_TRIANGLES, 0, NUM_SPRITE_TRIANGLES_VERT_COUNT);
+}
 
 void initGeometry(Sprite* sprite)
 {
@@ -251,10 +199,9 @@ void initGeometry(Sprite* sprite)
 
 void updateMatrixSprite(Sprite* sprite)
 {
-	sprite->modelMatrix = glm::scale(glm::vec3(sprite->scale.x, sprite->scale.y, 1.0f))
+	sprite->modelMatrix = glm::translate(glm::vec3(sprite->pos.x, sprite->pos.y, 0.0f))
 		* glm::rotate(sprite->angle, glm::vec3(0.0f, 0.0f, 1.0f))
-		* glm::translate(glm::vec3(sprite->pos.x, sprite->pos.y, 0.0f));
-	
+		* glm::scale(glm::vec3(sprite->scale.x, sprite->scale.y, 1.0f));	
 }
 
 void updateGeometry(Sprite* sprite)
@@ -382,7 +329,7 @@ void initSprite(Sprite* sprite, const std::string& texPath, const std::string& s
 	sprite->shaderName = shaderName;
 	unsigned int texWidth;
 	unsigned int texHeight;
-	loadTexture(sprite->texPath, sprite->texID, texWidth, texHeight);
+	loadTexture(sprite->texPath, sprite->texID, texWidth, texHeight, gTextures);
 
 	sprite->width = (float)texWidth;
 	sprite->height = (float)texHeight;
@@ -405,14 +352,13 @@ void initSprite(Sprite* sprite, const std::string& texPath, const std::string& s
 	updateMatrixSprite(sprite);
 }
 
-
 void initSprite(Sprite* sprite, const std::string& texPath, const std::string& shaderName, float w, float h)
 {
 	sprite->texPath = texPath;
 	sprite->shaderName = shaderName;
 	unsigned int texWidth;
 	unsigned int texHeight;
-	loadTexture(sprite->texPath, sprite->texID, texWidth, texHeight);	
+	loadTexture(sprite->texPath, sprite->texID, texWidth, texHeight, gTextures);
 
 	sprite->width = w;
 	sprite->height = h;
@@ -435,110 +381,13 @@ void initSprite(Sprite* sprite, const std::string& texPath, const std::string& s
 	updateMatrixSprite(sprite);
 }
 
-void cleanupSprite(Sprite* sprite)
+void Sprite::cleanup()
 {
 	glDisableVertexAttribArray(0);
-	glDeleteBuffers(NUM_SPRITE_VBO, sprite->vboIDs);
-	glDeleteBuffers(1, &sprite->eboID);
-	glDeleteVertexArrays(NUM_SPRITE_VAO, &sprite->vaoID);
-	glDeleteSamplers(1, &sprite->samplerID);
-}
-
-
-
-struct OrthoCamera
-{
-	glm::vec3 eye;
-	glm::vec3 up;
-	glm::vec3 target;
-
-	float left;
-	float right;
-	float top;
-	float bot;
-	float zNear;
-	float zFar;
-	
-	glm::mat4 viewMatrix;
-	glm::mat4 projMatrix;
-};
-
-void initCamera(OrthoCamera* cam)
-{
-	cam->viewMatrix = glm::lookAt(cam->eye, cam->target, cam->up);
-	cam->projMatrix = glm::ortho(cam->left, cam->right, cam->bot, cam->top, cam->zNear, cam->zFar);
-}
-
-//void rotateCamera(OrthoCamera* cam, const glm::vec3& axis, float angle)
-//{
-//	cam->viewMatrix = rotate(cam->viewMatrix, angle, axis);
-//	cam->up = cam->up * glm::rotate(glm::mat4(1.0f), angle, axis);
-//	cam->target = rotate(cam->target, angle, axis);
-//}
-//
-//void translateCamera(OrthoCamera* cam, const glm::vec3& translationVector)
-//{
-//	cam->viewMatrix = translate(cam->viewMatrix, translationVector);
-//	cam->eye = translate(cam->eye, translationVector);
-//	cam->target = translate(cam->eye)
-//}
-//
-//void zoomCamera(OrthoCamera* cam, float value)
-//{
-//	float newWidth = (cam->right - cam->left) / value;
-//	cam->left = 
-//}
-
-void renderSprite(OrthoCamera* cam, Sprite* sprite)
-{
-	glm::mat4 mvp = cam->projMatrix * cam->viewMatrix * sprite->modelMatrix;
-	// Pass matrices, setup shader params, etc
-	TShaderTableIter shaderIt = gShaders.find(sprite->shaderName);
-	if (shaderIt == gShaders.end())
-	{
-		logError("Shader not found!!");
-		return;
-	}
-
-	glm::vec4 pos = mvp * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-	pos = mvp * glm::vec4(0.0f, 60.0f, 0.0f, 1.0f);
-	pos = mvp * glm::vec4(-50.0f, 60.0f, 0.0f, 1.0f);
-
-	Shader shader = shaderIt->second;
-	shader.bindAttributeLocation(SPRITE_VBO_ATTR_POS, "inPos");
-	shader.bindAttributeLocation(SPRITE_VBO_ATTR_UV, "inTexCoord");
-
-	const int TEX_UNIT = 0;
-	glActiveTexture(GL_TEXTURE0 + TEX_UNIT); // The 0 addition seems to be a convention to specify the texture unit
-	glBindTexture(GL_TEXTURE_2D, sprite->texID);
-	glBindSampler(TEX_UNIT, sprite->samplerID);
-
-	shader.registerUniform1i("texture", 0);
-	shader.registerUniformMatrix4f("pvm", (GLfloat*)glm::value_ptr(mvp));	
-	shader.useProgram();
-
-	if (sprite->alphaBlend)
-	{
-		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	}
-	else
-	{
-		glDisable(GL_BLEND);
-	}
-
-	glBindVertexArray(sprite->vaoID);
-	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_POS]);
-	glVertexAttribPointer(SPRITE_VBO_ATTR_POS, SPRITE_FLOATS_PER_VERTEX, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, three floats/vtx
-	glEnableVertexAttribArray(SPRITE_VBO_ATTR_POS);
-	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_UV]);
-	glVertexAttribPointer(SPRITE_VBO_ATTR_UV, SPRITE_FLOATS_PER_UV, GL_FLOAT, GL_FALSE, 0, 0);
-	glEnableVertexAttribArray(SPRITE_VBO_ATTR_UV);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sprite->eboID);
-
-	//glDrawArrays(GL_TRIANGLES, 0, NUM_SPRITE_TRIANGLES_VERT_COUNT);
-	glDrawElements(GL_TRIANGLES, NUM_SPRITE_TRIANGLES_IDX_COUNT, GL_UNSIGNED_INT, nullptr);	
-	//glDrawArrays(GL_TRIANGLES, 0, NUM_SPRITE_TRIANGLES_VERT_COUNT);
+	glDeleteBuffers(NUM_SPRITE_VBO, vboIDs);
+	glDeleteBuffers(1, &eboID);
+	glDeleteVertexArrays(NUM_SPRITE_VAO, &vaoID);
+	glDeleteSamplers(1, &samplerID);
 }
 
 static const int SCREEN_FULLSCREEN = 0;
@@ -546,8 +395,6 @@ static const int SCREEN_WIDTH  = 800;
 static const int SCREEN_HEIGHT = 600;
 static SDL_Window *window = nullptr;
 static SDL_GLContext maincontext;
-static OrthoCamera cam;
-
 
 static void APIENTRY openglCallbackFunction( GLenum source, GLenum type,
   GLuint id, GLenum severity, GLsizei length,
@@ -562,7 +409,6 @@ static void APIENTRY openglCallbackFunction( GLenum source, GLenum type,
 	  abort();
   }
 }
-
 
 bool init(const char * caption, bool fullscreen, int windowWidth, int windowHeight, int x = SDL_WINDOWPOS_CENTERED, int y = SDL_WINDOWPOS_CENTERED) 
 {
@@ -650,12 +496,12 @@ bool init(const char * caption, bool fullscreen, int windowWidth, int windowHeig
 	int w,h;
 	SDL_GetWindowSize(window, &w, &h);
 	glViewport(0, 0, w, h);
-	glClearColor(0.0f, 0.5f, 1.0f, 0.0f);
+	glClearColor(0.5f, 0.5f, 0.0f, 0.0f);
 
 	return true;
 }
 
-void close(SDL_Window* window, SDL_GLContext context, Sprite* sprite)
+void close(SDL_Window* window, SDL_GLContext context, std::vector<Drawable*> drawables)
 {
 	// Cleanup all the things we bound and allocated
 	for (TShaderTableIter it = gShaders.begin(); it != gShaders.end(); ++it)
@@ -663,7 +509,10 @@ void close(SDL_Window* window, SDL_GLContext context, Sprite* sprite)
 		it->second.cleanUp();
 	}
 
-	cleanupSprite(sprite);
+	for (auto item : drawables)
+	{
+		item->cleanup();
+	}
 
 	// Delete our OpengL context
 	SDL_GL_DeleteContext(context);
@@ -675,7 +524,6 @@ void close(SDL_Window* window, SDL_GLContext context, Sprite* sprite)
 	SDL_Quit();
 }
 
-
 struct Input
 {
 	float xAxis;
@@ -686,8 +534,10 @@ struct Input
 		xAxis = yAxis = 0.0f;
 	}
 };
+
 float switchTimeout;
 bool drawLine;
+
 void update(float dt, Input* input, Sprite* sprite)
 {
 	sprite->velocity.x = input->xAxis * sprite->speed;
@@ -695,6 +545,7 @@ void update(float dt, Input* input, Sprite* sprite)
 
 	sprite->pos.x += sprite->velocity.x * dt;
 	sprite->pos.y += sprite->velocity.y * dt;
+	
 	updateMatrixSprite(sprite);
 }
 
@@ -713,14 +564,18 @@ bool createShader(const std::string& name, const char* files[], GLenum* types, i
 	return true;
 }
 
-void render(SDL_Window* window, OrthoCamera* c, Sprite* s)
+void render(SDL_Window* w, Camera* c, const std::vector<Drawable*>& drawableObjects)
 {
 	glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	renderSprite(c, s);
+	for (auto drawable : drawableObjects)
+	{
+		drawable->draw(w, c);
+	}
 
-	SDL_GL_SwapWindow(window);
+	SDL_GL_SwapWindow(w);
+
 }
 
 
@@ -767,43 +622,94 @@ void handleInput(SDL_Event& event, bool& quit, Input* input)
 
 int main(int argc, char* args[])
 {
-	if (!init("OpenGL 4.5", false, 800, 600))
+	const int WINDOWS_WIDTH = 800;
+	const int WINDOWS_HEIGHT = 600;
+	if (!init("OpenGL 4.5", false, WINDOWS_WIDTH, WINDOWS_HEIGHT))
 	{
 		return -1;
 	}
 
-	cam.eye = { 0.0f, 0.0f, 0.8f };
-	cam.target = { 0.0f, 0.0f, 0.0f };
-	cam.up = { 0.0f, 1.0f, 0.0f };
-	cam.left = -SCREEN_WIDTH/2;
-	cam.right = SCREEN_WIDTH/2;
-	cam.top = SCREEN_HEIGHT/2;
-	cam.bot = -SCREEN_HEIGHT/2;
-	cam.zNear = 1.0f;
-	cam.zFar = -1.0f;
-	initCamera(&cam);
+	gCam.eye = { 0.0f, 0.0f, 0.8f };
+	gCam.target = { 0.0f, 0.0f, 0.0f };
+	gCam.up = { 0.0f, 1.0f, 0.0f };
+	gCam.left = -SCREEN_WIDTH/2;
+	gCam.right = SCREEN_WIDTH/2;
+	gCam.top = SCREEN_HEIGHT/2;
+	gCam.bot = -SCREEN_HEIGHT/2;
+	gCam.zNear = 1.0f;
+	gCam.zFar = -1.0f;
+	updateCameraViewMatrix(&gCam);
+	updateCameraProjectionMatrix(&gCam);
+
+	//perCam.eye = { 0.f, 0.f, 965.68f }; // Still an approximation, the idea with this combination of zFar and eye.z was to get the sprite to render to the screen using pixel-perfect...ish coords
+	//perCam.target = { 0.f, 0.f,0.f };
+	//perCam.up = { 0.f, 1.f,0.f };
+	//perCam.fov = glm::radians(45.f);
+	//perCam.aspect = WINDOWS_WIDTH / (float)WINDOWS_HEIGHT;
+	//perCam.zNear = 0.1f;
+	//perCam.zFar = 965.68f;
+	//updateCameraViewMatrix(&perCam);
+	//updateCameraProjectionMatrix(&perCam);
 
 	const int DEFAULT_SPRITE_SHADER_NUM_FILES = 2;
 	const char* fileNames[DEFAULT_SPRITE_SHADER_NUM_FILES] = { "data/shader/text.vert", "data/shader/text.frag" };
+
+	const int LINE_SHADER_NUM_FILES = 2;
+	const char* lineNames[LINE_SHADER_NUM_FILES] = { "data/shader/line.vert","data/shader/line.frag" };
+
 	GLenum types[DEFAULT_SPRITE_SHADER_NUM_FILES] = { GL_VERTEX_SHADER, GL_FRAGMENT_SHADER };
 	createShader(DEFAULT_SHADER_NAME, fileNames, types, DEFAULT_SPRITE_SHADER_NUM_FILES);
+	createShader(LINE_SHADER_NAME, lineNames, types, LINE_SHADER_NUM_FILES);
 	
 	static const std::string spriteName("chara");
 	static const std::string texPath("data/textures/chara_b.png");
 	Sprite sprite(spriteName);
 	initSprite(&sprite, texPath, DEFAULT_SHADER_NAME);
-	sprite.pos.x = 0.0f;
-	sprite.pos.y = 0.0f;
+	sprite.pos.x = 2.0f;
+	sprite.pos.y = 1.f;
 	sprite.angle = 0.0f;
-	sprite.pos.y = 0.0f;
-	sprite.scale.xy = 0.5f;
+	sprite.scale.xy = 1.f;
 	sprite.velocity.xy = 0.0f;
 	sprite.speed = 300.0f;
+
+	LineRenderer line("line");
+	line.shaderName = LINE_SHADER_NAME;
+	line.colourRGBA[0] = 1.f;
+	line.colourRGBA[1] = 0.f;
+	line.colourRGBA[2] = 0.f;
+	line.colourRGBA[3] = 1.f;
+
+	line.lineWidth = 15.f;
+	line.alphaBlend = true;
+	createSegment({-400, 0}, {400,0}, line);
+	
+	initGeometry(line);
+	updateGeometry(line);
+	line.modelMatrix = glm::translate(glm::vec3(line.pos.x, line.pos.y, 0.0f))
+		* glm::rotate(line.angle, glm::vec3(0.0f, 0.0f, 1.0f))
+		* glm::scale(glm::vec3(line.scale.x, line.scale.y, 1.0f));
+
+	LineRenderer line2("line2");
+	line2.shaderName = LINE_SHADER_NAME;
+	line2.colourRGBA[0] = 1.f;
+	line2.colourRGBA[1] = 0.f;
+	line2.colourRGBA[2] = 1.f;
+	line2.colourRGBA[3] = 1.f;
+	line2.angle = DEG2RAD * 45.f;
+	line2.lineWidth = 15.f;
+	line2.alphaBlend = true;
+	createSegment({ 0, -300 }, { 0,300 }, line2);
+
+	initGeometry(line2);
+	updateGeometry(line2);
+	line2.modelMatrix = glm::translate(glm::vec3(line2.pos.x, line2.pos.y, 0.0f))
+		* glm::rotate(line2.angle, glm::vec3(0.0f, 0.0f, 1.0f))
+		* glm::scale(glm::vec3(line2.scale.x, line2.scale.y, 1.0f));
 
 	updateMatrixSprite(&sprite);
 	sprite.alphaBlend = true;
 	glm::vec2 zero;
-	setPivotType(&sprite, PivotType::Bottom);
+	setPivotType(&sprite, PivotType::Centre);
 	
 	SDL_Event event;
 	bool quit = false;
@@ -822,10 +728,10 @@ int main(int argc, char* args[])
 		start = end;
 		handleInput(event, quit, &input);
 		update(elapsedSeconds, &input, &sprite);
-		render(window, &cam, &sprite);
+		render(window, &gCam, { &sprite,&line, &line2 });
 	}
 
-	close(window, maincontext, &sprite);
+	close(window, maincontext, { &line});
 	return 0;
 }
 

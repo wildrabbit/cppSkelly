@@ -4,6 +4,7 @@
 #include <string>
 #include <glad\glad.h>
 #include <vector>
+#include <map>
 class Shader
 {
 private:
@@ -35,5 +36,10 @@ public:
 		return mProgram;
 	}
 };
+
+typedef std::map<std::string, Shader> TShaderTable;
+typedef std::map<std::string, Shader>::iterator TShaderTableIter;
+
+extern TShaderTable gShaders;
 
 #endif
