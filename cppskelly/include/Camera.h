@@ -1,44 +1,64 @@
 #ifndef CAMERAH_H
 #define CAMERAH_H
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <glm/gtx/transform.hpp>
+#include <glm/vec3.hpp>
+#include <glm/mat4x4.hpp>
 
-#include "GeomUtils.h"
-#include "glad/glad.h"
-
-class Camera
+struct Camera
 {
-protected:
-	glm::mat4 viewMatrix;
-	glm::mat4 projMatrix;
-public:
-	Camera();
-	virtual ~Camera();
-
-	virtual void init() = 0;
-};
-
-class OrthoCamera: public Camera
-{
-private:
 	glm::vec3 eye;
 	glm::vec3 up;
 	glm::vec3 target;
 
+	glm::mat4 viewMatrix;
+	glm::mat4 projMatrix;
+
+	float zNear;
+	float zFar;
+};
+
+struct PerspectiveCamera : Camera
+{
+	float fov;
+	float aspect;
+};
+
+struct OrthoCamera : Camera
+{
 	float left;
 	float right;
 	float top;
 	float bot;
-	float zNear;
-	float zFar;
-public:
-	OrthoCamera();
-	virtual ~OrthoCamera();
-
-	virtual void init() override;
 };
 
-// TODO: Perspective camera.
+
+
+//void rotateCamera(OrthoCamera* cam, const glm::vec3& axis, float angle)
+//{
+//	cam->viewMatrix = rotate(cam->viewMatrix, angle, axis);
+//	cam->up = cam->up * glm::rotate(glm::mat4(1.0f), angle, axis);
+//	cam->target = rotate(cam->target, angle, axis);
+//}
+//
+//void translateCamera(OrthoCamera* cam, const glm::vec3& translationVector)
+//{
+//	cam->viewMatrix = translate(cam->viewMatrix, translationVector);
+//	cam->eye = translate(cam->eye, translationVector);
+//	cam->target = translate(cam->eye)
+//}
+//
+//void zoomCamera(OrthoCamera* cam, float value)
+//{
+//	float newWidth = (cam->right - cam->left) / value;
+//	cam->left = 
+//}
+
+void updateCameraViewMatrix(Camera* cam);
+void updateCameraProjectionMatrix(PerspectiveCamera* cam);
+void updateCameraProjectionMatrix(OrthoCamera* cam);
+
+
+static OrthoCamera gCam;
+static PerspectiveCamera gPerspectiveCam;
+
+
 #endif

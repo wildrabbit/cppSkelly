@@ -20,6 +20,145 @@ const int NUM_TRIANGLES_PER_QUAD = 2;
 const int NUM_INDEXES_PER_TRIANGLE = 3;
 const char* LINE_SHADER_NAME = "lines_default";
 
+void createQuadraticBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control, LineRenderer& renderer, int numSteps)
+{
+	std::vector<glm::vec2> points(numSteps + 1);
+	points.push_back(a);
+	float delta = 1.f / (float)numSteps;
+	glm::vec2 ac = control - a;
+	glm::vec2 cb = b - control;
+	for (int i = 1; i < numSteps; ++i)
+	{
+		float t = i * delta;
+		glm::vec2 t1 = a + ac * t;
+		glm::vec2 t2 = control + cb * t;
+
+		glm::vec2 tlerp = t2 - t1;
+		points.push_back(t1 + tlerp * t);
+	}
+	points.push_back(b);
+	createPolyline(points, renderer);
+}
+
+void createCubicBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control1, const glm::vec2& control2, LineRenderer& renderer, int numSteps)
+{
+	std::vector<glm::vec2> points(numSteps + 1);
+	points.push_back(a);
+	float delta = 1.f / (float)numSteps;
+	glm::vec2 ac1 = control1 - a;
+	glm::vec2 c1c2 = control2 - control1;
+	glm::vec2 c2b = b - control2;
+
+	for (int i = 1; i < numSteps; ++i)
+	{
+		float t = i * delta;
+		glm::vec2 t1 = a + ac1 * t;
+		glm::vec2 t2 = control1 + c1c2 * t;
+		glm::vec2 t3 = control2 + c2b * t;
+
+		glm::vec2 tLine1 = t2 - t1;
+		glm::vec2 tLine2 = t3 - t2;
+
+		glm::vec2 t4 = t1 + tLine1 * t;
+		glm::vec2 t5 = t2 + tLine2 * t;
+
+		glm::vec2 tLerp = t5 - t4;
+
+		points.push_back(t4 + tLerp * t);
+	}
+	points.push_back(b);
+	createPolyline(points, renderer);
+}
+
+void createPolyline(const std::vector<glm::vec2>& points, LineRenderer& renderer)
+{	
+	int numPoints = points.size();
+	int numQuads = numPoints - 1;
+
+	if (renderer.colours.size() == 0)
+	{
+		int numVertices = 2 * numPoints;
+		int numColourValues = numVertices * LINE_FLOATS_PER_COLOUR;
+		renderer.colours.resize(numColourValues);
+		for (int i = 0; i < numVertices; ++i)
+		{
+			std::copy(std::begin(renderer.colourRGBA), std::end(renderer.colourRGBA), renderer.colours.begin() + i * LINE_FLOATS_PER_COLOUR);
+		}
+	}
+	if (renderer.linePointWidths.size() == 0 && renderer.lineWidth > 0)
+	{
+		renderer.linePointWidths.resize(numPoints, renderer.lineWidth);
+	}
+
+	glm::vec2 ab;
+	glm::vec2 normal;
+	renderer.vertices.clear();
+	renderer.indexes.clear();
+	const int indexesPerQuad = NUM_TRIANGLES_PER_QUAD * NUM_INDEXES_PER_TRIANGLE;
+
+	if (points.size() < 2) return;
+
+	ab = points[1] - points[0];
+	normal = { -ab.y, ab.x };
+	normal = normalize(normal);
+	renderer.vertices.push_back(points[0].x + renderer.linePointWidths[0] * normal.x);
+	renderer.vertices.push_back(points[0].y + renderer.linePointWidths[0] * normal.y);
+	renderer.vertices.push_back(points[0].x - renderer.linePointWidths[0] * normal.x);
+	renderer.vertices.push_back(points[0].y - renderer.linePointWidths[0] * normal.y);
+
+	glm::vec2 bc;
+	glm::vec2 n2;
+	glm::vec2 tangent;
+	glm::vec2 miterNormal;
+	for (int i = 1; i < numPoints; i++)
+	{
+		ab = points[i] - points[i - 1];
+		normal = { -ab.y, ab.x };
+		normal = normalize(normal);
+
+		if (i == numPoints - 1)
+		{
+			renderer.vertices.push_back(points[i].x + renderer.linePointWidths[i] * normal.x);
+			renderer.vertices.push_back(points[i].y + renderer.linePointWidths[i] * normal.y);
+			renderer.vertices.push_back(points[i].x - renderer.linePointWidths[i] * normal.x);
+			renderer.vertices.push_back(points[i].y - renderer.linePointWidths[i] * normal.y);
+		}
+		else
+		{
+			bc = points[i + 1] - points[i];
+			n2 = { -bc.y, bc.x };
+			n2 = normalize(n2);
+			tangent = normalize(normalize(ab) + normalize(bc));
+			miterNormal = { -tangent.y, tangent.x };
+			miterNormal = normalize(miterNormal);
+			float len = renderer.linePointWidths[i] / glm::dot(miterNormal,n2);
+			renderer.vertices.push_back(points[i].x + len * miterNormal.x);
+			renderer.vertices.push_back(points[i].y + len * miterNormal.y);
+			renderer.vertices.push_back(points[i].x - len * miterNormal.x);
+			renderer.vertices.push_back(points[i].y - len * miterNormal.y);
+		}
+
+	}
+
+	for (int i = 0; i < numQuads; ++i)
+	{
+		const int baseIdx = i * 2;
+		renderer.indexes.push_back(baseIdx + 1);
+		renderer.indexes.push_back(baseIdx + 2);
+		renderer.indexes.push_back(baseIdx);
+		renderer.indexes.push_back(baseIdx + 1);
+		renderer.indexes.push_back(baseIdx + 3);
+		renderer.indexes.push_back(baseIdx + 2);
+	}
+	
+	
+}
+
+void addPoints(const std::vector<glm::vec2&>& points, LineRenderer& renderer)
+{
+
+}
+
 void createSegment(const glm::vec2& a, const glm::vec2& b, LineRenderer& renderer)
 {
 	int numPoints = 2;

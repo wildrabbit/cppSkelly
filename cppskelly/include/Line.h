@@ -82,8 +82,11 @@ struct LineRenderer: public Drawable
 void initGeometry(LineRenderer& renderer);
 
 void createSegment(const glm::vec2& a, const glm::vec2& b, LineRenderer& renderer);
-void createQuadraticBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control, LineRenderer& renderer);
-void createCubicBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control, LineRenderer& renderer);
+void createPolyline(const std::vector<glm::vec2>& points, LineRenderer& renderer);
+
+void addPoints(const std::vector<glm::vec2&>& points, LineRenderer& renderer);
+void createQuadraticBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control, LineRenderer& renderer, int numSteps);
+void createCubicBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control1, const glm::vec2& control2, LineRenderer& renderer, int numSteps);
 void updateGeometry(LineRenderer& renderer);
 
 #endif

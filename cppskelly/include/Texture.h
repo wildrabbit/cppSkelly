@@ -1,30 +1,22 @@
-#ifndef TEXTUREH_H
-#define TEXTUREH_H
-
+#ifndef TextureH_H
+#define TextureH_H
 #include <string>
 #include <map>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <glm/gtx/transform.hpp>
+#include <glad/glad.h>
 
-#include "GeomUtils.h"
-#include "glad/glad.h"
-
+struct Texture
+{
+	std::string path;
+	unsigned int texID;
+	unsigned int width;
+	unsigned int height;
+	int bpp;
+	GLenum texFormat;
+};
 
 typedef std::map<std::string, Texture> TTextureTable;
 typedef TTextureTable::iterator TTextureTableIter;
 
-class Texture
-{
+bool loadTexture(const std::string& fileName, GLuint& texture, GLuint& width, GLuint& height, TTextureTable& table);
 
-private:
-		std::string path;
-		GLuint texID;
-		GLuint width;
-		GLuint height;
-		GLint bpp;
-		GLenum texFormat;
-	};
-};
 #endif

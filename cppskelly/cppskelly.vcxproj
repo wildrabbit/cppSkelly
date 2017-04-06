@@ -155,13 +155,14 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\Camera.h" />
+    <ClInclude Include="include\Drawable.h" />
     <ClInclude Include="include\GeomUtils.h" />
+    <ClInclude Include="include\Line.h" />
     <ClInclude Include="include\logUtils.h" />
     <ClInclude Include="include\Shader.h" />
-    <ClInclude Include="src\Camera.h" />
-    <ClInclude Include="src\Drawable.h" />
-    <ClInclude Include="src\Line.h" />
-    <ClInclude Include="src\Texture.h" />
+    <ClInclude Include="include\Sprite.h" />
+    <ClInclude Include="include\Texture.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="data\shader\line.frag" />

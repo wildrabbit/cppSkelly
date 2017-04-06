@@ -632,10 +632,10 @@ int main(int argc, char* args[])
 	gCam.eye = { 0.0f, 0.0f, 0.8f };
 	gCam.target = { 0.0f, 0.0f, 0.0f };
 	gCam.up = { 0.0f, 1.0f, 0.0f };
-	gCam.left = -SCREEN_WIDTH/2;
-	gCam.right = SCREEN_WIDTH/2;
-	gCam.top = SCREEN_HEIGHT/2;
-	gCam.bot = -SCREEN_HEIGHT/2;
+	gCam.left = -SCREEN_WIDTH / 2;
+	gCam.right = SCREEN_WIDTH / 2;
+	gCam.top = SCREEN_HEIGHT / 2;
+	gCam.bot = -SCREEN_HEIGHT / 2;
 	gCam.zNear = 1.0f;
 	gCam.zFar = -1.0f;
 	updateCameraViewMatrix(&gCam);
@@ -660,7 +660,7 @@ int main(int argc, char* args[])
 	GLenum types[DEFAULT_SPRITE_SHADER_NUM_FILES] = { GL_VERTEX_SHADER, GL_FRAGMENT_SHADER };
 	createShader(DEFAULT_SHADER_NAME, fileNames, types, DEFAULT_SPRITE_SHADER_NUM_FILES);
 	createShader(LINE_SHADER_NAME, lineNames, types, LINE_SHADER_NUM_FILES);
-	
+
 	static const std::string spriteName("chara");
 	static const std::string texPath("data/textures/chara_b.png");
 	Sprite sprite(spriteName);
@@ -681,8 +681,8 @@ int main(int argc, char* args[])
 
 	line.lineWidth = 15.f;
 	line.alphaBlend = true;
-	createSegment({-400, 0}, {400,0}, line);
-	
+	createSegment({ -400, 0 }, { 400,0 }, line);
+
 	initGeometry(line);
 	updateGeometry(line);
 	line.modelMatrix = glm::translate(glm::vec3(line.pos.x, line.pos.y, 0.0f))
@@ -695,16 +695,57 @@ int main(int argc, char* args[])
 	line2.colourRGBA[1] = 0.f;
 	line2.colourRGBA[2] = 1.f;
 	line2.colourRGBA[3] = 1.f;
-	line2.angle = DEG2RAD * 45.f;
+	line2.pos = glm::zero<glm::vec2>();
+	line2.angle = 0.f;
 	line2.lineWidth = 15.f;
 	line2.alphaBlend = true;
-	createSegment({ 0, -300 }, { 0,300 }, line2);
+	std::vector<glm::vec2> points = {
+		{ 0.f, -300.f },{ -50.f,-200.f },{ 50.f,-100.f },{ -50.f,0.f },{ 50.f,100.f }, {-50.f,200.f}, {0.f, 300.f}
+	};
+	createPolyline(points,line2);
 
 	initGeometry(line2);
 	updateGeometry(line2);
 	line2.modelMatrix = glm::translate(glm::vec3(line2.pos.x, line2.pos.y, 0.0f))
 		* glm::rotate(line2.angle, glm::vec3(0.0f, 0.0f, 1.0f))
 		* glm::scale(glm::vec3(line2.scale.x, line2.scale.y, 1.0f));
+
+
+	LineRenderer line3("line3");
+	line3.shaderName = LINE_SHADER_NAME;
+	line3.colourRGBA[0] = 0.3f;
+	line3.colourRGBA[1] = 0.8f;
+	line3.colourRGBA[2] = 0.8f;
+	line3.colourRGBA[3] = 1.f;
+	line3.pos = glm::zero<glm::vec2>();
+	line3.angle = 0.f;
+	line3.lineWidth = 1.f;
+	line3.alphaBlend = true;
+	createQuadraticBezier({ -400.f, 30.f }, { 0.f, 30.f }, { -200.f, 220.f },line3, 10);
+
+	initGeometry(line3);
+	updateGeometry(line3);
+	line3.modelMatrix = glm::translate(glm::vec3(line3.pos.x, line3.pos.y, 0.0f))
+		* glm::rotate(line3.angle, glm::vec3(0.0f, 0.0f, 1.0f))
+		* glm::scale(glm::vec3(line3.scale.x, line3.scale.y, 1.0f));
+
+	LineRenderer line4("line4");
+	line4.shaderName = LINE_SHADER_NAME;
+	line4.colourRGBA[0] = 0.8f;
+	line4.colourRGBA[1] = 0.8f;
+	line4.colourRGBA[2] = 0.8f;
+	line4.colourRGBA[3] = 1.f;
+	line4.pos = glm::zero<glm::vec2>();
+	line4.angle = 0.f;
+	line4.lineWidth = 1.f;
+	line4.alphaBlend = true;
+	createCubicBezier({ 0, 30.f }, { 400.f, 30.f }, { 100, 220.f }, {300.f,-190.f}, line4, 20);
+
+	initGeometry(line4);
+	updateGeometry(line4);
+	line4.modelMatrix = glm::translate(glm::vec3(line4.pos.x, line4.pos.y, 0.0f))
+		* glm::rotate(line4.angle, glm::vec3(0.0f, 0.0f, 1.0f))
+		* glm::scale(glm::vec3(line4.scale.x, line4.scale.y, 1.0f));
 
 	updateMatrixSprite(&sprite);
 	sprite.alphaBlend = true;
@@ -728,10 +769,10 @@ int main(int argc, char* args[])
 		start = end;
 		handleInput(event, quit, &input);
 		update(elapsedSeconds, &input, &sprite);
-		render(window, &gCam, { &sprite,&line, &line2 });
+		render(window, &gCam, { &sprite,&line, &line2, &line3,&line4 });
 	}
 
-	close(window, maincontext, { &line});
+	close(window, maincontext, { &line, &line2, &line3, &line4});
 	return 0;
 }
 
