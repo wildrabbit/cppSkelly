@@ -20,6 +20,9 @@ const int NUM_TRIANGLES_PER_QUAD = 2;
 const int NUM_INDEXES_PER_TRIANGLE = 3;
 const char* LINE_SHADER_NAME = "lines_default";
 
+#define BUFFER_OFFSET(i) ((void*)(i))
+
+
 void createQuadraticBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control, LineRenderer& renderer, int numSteps)
 {
 	std::vector<glm::vec2> points(numSteps + 1);
@@ -282,7 +285,8 @@ void updateLineSprite (LineRenderer& line)
 
 void cleanupLine(LineRenderer& line)
 {
-	glDisableVertexAttribArray(0);
+	glDisableVertexAttribArray(LINE_VBO_ATTR_POS);
+	glDisableVertexAttribArray(LINE_VBO_ATTR_COLOR);
 	glDeleteBuffers(NUM_LINE_VBO, line.vboIDs);
 	glDeleteBuffers(1, &line.eboID);
 	glDeleteVertexArrays(NUM_LINE_VAO, &line.vaoID);

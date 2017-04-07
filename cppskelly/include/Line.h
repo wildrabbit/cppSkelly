@@ -23,7 +23,6 @@ extern const int NUM_VERTICES_PER_QUAD;
 extern const int NUM_TRIANGLES_PER_QUAD;
 extern const int NUM_INDEXES_PER_TRIANG;
 
-#define BUFFER_OFFSET(i) ((void*)(i))
 
 extern const char* LINE_SHADER_NAME;
 

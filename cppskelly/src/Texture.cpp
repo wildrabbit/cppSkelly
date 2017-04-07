@@ -4,6 +4,9 @@
 #include <SDL_image.h>
 #include <sstream>
 
+TTextureTable gTextures;
+
+
 bool loadTexture(const std::string& fileName, GLuint& texture, GLuint& width, GLuint& height, TTextureTable& table)
 {
 	TTextureTableIter value = table.find(fileName);
@@ -92,4 +95,9 @@ bool loadTexture(const std::string& fileName, GLuint& texture, GLuint& width, GL
 	}
 
 	return true;
+}
+
+void Texture::cleanUp()
+{
+	glDeleteTextures(1, &texID);
 }

@@ -52,6 +52,9 @@ struct OrthoCamera : Camera
 //	cam->left = 
 //}
 
+void initOrtho(OrthoCamera* cam, const glm::vec3& eye, const glm::vec3& target, const glm::vec3& up, const glm::vec4& borders, float zNear, float zFar);
+void initPerspective(PerspectiveCamera* cam, const glm::vec3& eye, const glm::vec3& target, const glm::vec3& up, float fov, float aspect, float zNear, float zFar);
+
 void updateCameraViewMatrix(Camera* cam);
 void updateCameraProjectionMatrix(PerspectiveCamera* cam);
 void updateCameraProjectionMatrix(OrthoCamera* cam);

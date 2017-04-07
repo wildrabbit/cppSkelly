@@ -23,372 +23,8 @@
 #include "Shader.h"
 #include "Camera.h"
 #include "Line.h"
+#include "Sprite.h"
 #include "Texture.h"
-
-
-//Define this somewhere in your header file
-#define BUFFER_OFFSET(i) ((void*)(i))
-
-TTextureTable gTextures;
-
-// Forget about batching for now
-const int NUM_SPRITE_VBO = 2;
-const int NUM_SPRITE_VAO = 1;
-const int NUM_SPRITE_TRIANGLES_VERT_COUNT = 4;
-const int NUM_SPRITE_TRIANGLES_IDX_COUNT = 6;
-const int SPRITE_VBO_ATTR_POS = 0;
-const int SPRITE_VBO_ATTR_UV = 1;
-
-const int SPRITE_FLOATS_PER_VERTEX = 2;
-const int SPRITE_FLOATS_PER_UV = 2;
-
-const char* DEFAULT_SHADER_NAME = "sprites_default";
-
-struct Sprite: public Drawable
-{
-	std::string name;
-	std::string texPath;
-	std::string shaderName;
-	Rect clipRect;
-	unsigned int texID;
-	unsigned int shaderID;
-	unsigned int samplerID;
-	glm::vec2 pos;
-	glm::vec2 scale;
-	float width;
-	float height;
-	float angle;
-
-	float speed;
-
-	glm::vec2 velocity;
-	glm::vec2 acceleration;
-
-	glm::vec2 pivot;
-	glm::mat4 modelMatrix;
-
-	bool alphaBlend;
-	
-	GLfloat vertices[NUM_SPRITE_TRIANGLES_VERT_COUNT][SPRITE_FLOATS_PER_VERTEX];
-	GLfloat uvs[NUM_SPRITE_TRIANGLES_VERT_COUNT][SPRITE_FLOATS_PER_UV];
-
-	unsigned int indexes[NUM_SPRITE_TRIANGLES_IDX_COUNT];
-	unsigned int vaoID;
-	unsigned int vboIDs[NUM_SPRITE_VBO];
-	unsigned int eboID;
-
-	Sprite(const std::string& name)
-		:name(name)
-		,texPath() ,shaderName()
-		,texID(0), shaderID(0), samplerID(0)
-		,clipRect()
-		,width(0.0f), height(0.0f), angle(0.0f)
-		,pos(), scale(1.0f, 1.0f)
-		,pivot(), modelMatrix(), alphaBlend(false)
-	{}
-
-	void draw(SDL_Window* w, Camera* c) override;
-	void cleanup() override;
-
-};
-
-void Sprite::draw(SDL_Window* w, Camera* cam)
-{
-	glm::mat4 mvp = cam->projMatrix * cam->viewMatrix * modelMatrix;
-	// Pass matrices, setup shader params, etc
-	TShaderTableIter shaderIt = gShaders.find(shaderName);
-	if (shaderIt == gShaders.end())
-	{
-		logError("Shader not found!!");
-		return;
-	}
-
-	Shader shader = shaderIt->second;
-	shader.bindAttributeLocation(SPRITE_VBO_ATTR_POS, "inPos");
-	shader.bindAttributeLocation(SPRITE_VBO_ATTR_UV, "inTexCoord");
-
-	const int TEX_UNIT = 0;
-	glActiveTexture(GL_TEXTURE0 + TEX_UNIT); // The 0 addition seems to be a convention to specify the texture unit
-	glBindTexture(GL_TEXTURE_2D, texID);
-	glBindSampler(TEX_UNIT, samplerID);
-
-	shader.registerUniform1i("texture", 0);
-	shader.registerUniformMatrix4f("mvp", (GLfloat*)glm::value_ptr(mvp));
-	shader.useProgram();
-
-	if (alphaBlend)
-	{
-		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	}
-	else
-	{
-		glDisable(GL_BLEND);
-	}
-
-	glBindVertexArray(vaoID);
-	glBindBuffer(GL_ARRAY_BUFFER, vboIDs[SPRITE_VBO_ATTR_POS]);
-	glVertexAttribPointer(SPRITE_VBO_ATTR_POS, SPRITE_FLOATS_PER_VERTEX, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, three floats/vtx
-	glEnableVertexAttribArray(SPRITE_VBO_ATTR_POS);
-	glBindBuffer(GL_ARRAY_BUFFER, vboIDs[SPRITE_VBO_ATTR_UV]);
-	glVertexAttribPointer(SPRITE_VBO_ATTR_UV, SPRITE_FLOATS_PER_UV, GL_FLOAT, GL_FALSE, 0, 0);
-	glEnableVertexAttribArray(SPRITE_VBO_ATTR_UV);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eboID);
-
-	//glDrawArrays(GL_TRIANGLES, 0, NUM_SPRITE_TRIANGLES_VERT_COUNT);
-	glDrawElements(GL_TRIANGLES, NUM_SPRITE_TRIANGLES_IDX_COUNT, GL_UNSIGNED_INT, nullptr);
-	//glDrawArrays(GL_TRIANGLES, 0, NUM_SPRITE_TRIANGLES_VERT_COUNT);
-}
-
-void initGeometry(Sprite* sprite)
-{
-	sprite->vertices[0][0] = -sprite->pivot.x;
-	sprite->vertices[0][1] = -sprite->pivot.y;
-	sprite->vertices[1][0] = sprite->width - sprite->pivot.x;
-	sprite->vertices[1][1] = sprite->height - sprite->pivot.y;
-	sprite->vertices[2][0] = -sprite->pivot.x;
-	sprite->vertices[2][1] = sprite->height - sprite->pivot.y;
-	sprite->vertices[3][0] = sprite->width - sprite->pivot.x;
-	sprite->vertices[3][1] = -sprite->pivot.y;
-
-	sprite->indexes[0] = 0;
-	sprite->indexes[1] = 1;
-	sprite->indexes[2] = 2;
-	sprite->indexes[3] = 0;
-	sprite->indexes[4] = 3;
-	sprite->indexes[5] = 1;
-
-	sprite->uvs[0][0] = 0.0f;
-	sprite->uvs[0][1] = 1.0f;
-	sprite->uvs[1][0] = 1.0f;
-	sprite->uvs[1][1] = 0.0f;
-	sprite->uvs[2][0] = 0.0f;
-	sprite->uvs[2][1] = 0.0f;
-	sprite->uvs[3][0] = 1.0f;
-	sprite->uvs[3][1] = 1.0f;
-
-	glCreateVertexArrays(NUM_SPRITE_VAO, &(sprite->vaoID));
-	glBindVertexArray(sprite->vaoID); // current vtex array
-
-	glCreateBuffers(NUM_SPRITE_VBO, sprite->vboIDs);
-
-	// pos
-	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_POS]);
-	glBufferData(GL_ARRAY_BUFFER, (NUM_SPRITE_TRIANGLES_VERT_COUNT * SPRITE_FLOATS_PER_VERTEX) * sizeof(GLfloat), sprite->vertices, GL_DYNAMIC_DRAW);
-
-	glVertexAttribPointer(SPRITE_VBO_ATTR_POS, SPRITE_FLOATS_PER_VERTEX, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0)); // Coord. info => Atr. index #0, three floats/vtx
-	glEnableVertexAttribArray(SPRITE_VBO_ATTR_POS);
-
-
-	// UVS
-	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_UV]);
-	glBufferData(GL_ARRAY_BUFFER, (NUM_SPRITE_TRIANGLES_VERT_COUNT * SPRITE_FLOATS_PER_UV) * sizeof(GLfloat), sprite->uvs, GL_DYNAMIC_DRAW);
-
-	glVertexAttribPointer(SPRITE_VBO_ATTR_UV, SPRITE_FLOATS_PER_UV, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-	glEnableVertexAttribArray(SPRITE_VBO_ATTR_UV);
-
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	// Indexes
-	glCreateBuffers(1, &sprite->eboID);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sprite->eboID);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, (NUM_SPRITE_TRIANGLES_IDX_COUNT)* sizeof(GLuint), sprite->indexes, GL_STATIC_DRAW);
-
-
-}
-
-void updateMatrixSprite(Sprite* sprite)
-{
-	sprite->modelMatrix = glm::translate(glm::vec3(sprite->pos.x, sprite->pos.y, 0.0f))
-		* glm::rotate(sprite->angle, glm::vec3(0.0f, 0.0f, 1.0f))
-		* glm::scale(glm::vec3(sprite->scale.x, sprite->scale.y, 1.0f));	
-}
-
-void updateGeometry(Sprite* sprite)
-{
-	sprite->vertices[0][0] = -sprite->pivot.x;
-	sprite->vertices[0][1] = -sprite->pivot.y;
-	sprite->vertices[1][0] = sprite->width - sprite->pivot.x;
-	sprite->vertices[1][1] = sprite->height - sprite->pivot.y;
-	sprite->vertices[2][0] = -sprite->pivot.x;
-	sprite->vertices[2][1] = sprite->height - sprite->pivot.y;
-	sprite->vertices[3][0] = sprite->width - sprite->pivot.x;
-	sprite->vertices[3][1] = -sprite->pivot.y;
-
-	glBindVertexArray(sprite->vaoID); // current vtex array
-	// pos
-	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_POS]);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(sprite->vertices), sprite->vertices);
-	glVertexAttribPointer(SPRITE_VBO_ATTR_POS, SPRITE_FLOATS_PER_VERTEX, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, three floats/vtx
-
-
-	if (!sprite->clipRect.empty())
-	{
-		Texture tex = gTextures[sprite->texPath];
-		float clipX1Ratio = sprite->clipRect.x / tex.width;
-		float clipY1Ratio = sprite->clipRect.y / tex.height;
-		float clipX2Ratio = clipX1Ratio + sprite->clipRect.w / tex.width;
-		float clipY2Ratio = clipY1Ratio + sprite->clipRect.h / tex.height;
-		sprite->uvs[0][0] = clipX1Ratio;
-		sprite->uvs[0][1] = clipY2Ratio;
-		sprite->uvs[1][0] = clipX2Ratio;
-		sprite->uvs[1][1] = clipY1Ratio;
-		sprite->uvs[2][0] = clipX1Ratio;
-		sprite->uvs[2][1] = clipY1Ratio;
-		sprite->uvs[3][0] = clipX2Ratio;
-		sprite->uvs[3][1] = clipY2Ratio;
-	}
-	else
-	{
-		sprite->uvs[0][0] = 0.0f;
-		sprite->uvs[0][1] = 1.0f;
-		sprite->uvs[1][0] = 1.0f;
-		sprite->uvs[1][1] = 0.0f;
-		sprite->uvs[2][0] = 0.0f;
-		sprite->uvs[2][1] = 0.0f;
-		sprite->uvs[3][0] = 1.0f;
-		sprite->uvs[3][1] = 1.0f;
-	}
-
-	glBindBuffer(GL_ARRAY_BUFFER, sprite->vboIDs[SPRITE_VBO_ATTR_UV]);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(sprite->uvs), sprite->uvs);
-	glVertexAttribPointer(SPRITE_VBO_ATTR_UV, SPRITE_FLOATS_PER_UV, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, three floats/vtx
-
-	//Indexes will not change
-}
-
-void setCustomPivot(Sprite* sprite, glm::vec2* pivot, bool update = true)
-{
-	sprite->pivot.x = pivot->x;
-	sprite->pivot.y = pivot->y;
-	if (update)
-		updateGeometry(sprite);
-}
-
-void setPivotType(Sprite* sprite, PivotType pivotType, bool update = true)
-{
-	glm::vec2 v = { 0.0f, 0.0f };
-	switch (pivotType)
-	{
-	case PivotType::TopLeft:
-	{
-		v.y = sprite->height;
-		break;
-	}
-	case PivotType::Top:
-	{
-		v.x = sprite->width * 0.5f;
-		v.y = sprite->height;
-		break;
-	}
-	case PivotType::TopRight:
-	{
-		v.x = sprite->width;
-		v.y = sprite->height;
-		break;
-	}
-	case PivotType::CentreLeft:
-	{
-		v.y = sprite->height * 0.5f;
-		break;
-	}
-	case PivotType::Centre:
-	{
-		v.x = sprite->width * 0.5f;
-		v.y = sprite->height * 0.5f;
-		break;
-	}
-	case PivotType::CentreRight:
-	{
-		v.x = sprite->width;
-		v.y = sprite->height * 0.5f;
-		break;
-	}
-	case PivotType::BotLeft:
-	{
-		break;
-	}
-	case PivotType::Bottom:
-	{
-		v.x = sprite->width * 0.5f;
-		break;
-	}
-	case PivotType::BotRight:
-	{
-		v.x = sprite->width;
-		break;
-	}
-	default:
-		break;
-	}
-	setCustomPivot(sprite, &v, update);
-}
-void initSprite(Sprite* sprite, const std::string& texPath, const std::string& shaderName)
-{
-	sprite->texPath = texPath;
-	sprite->shaderName = shaderName;
-	unsigned int texWidth;
-	unsigned int texHeight;
-	loadTexture(sprite->texPath, sprite->texID, texWidth, texHeight, gTextures);
-
-	sprite->width = (float)texWidth;
-	sprite->height = (float)texHeight;
-
-	setPivotType(sprite, PivotType::Custom, false);
-
-	initGeometry(sprite);
-
-	TShaderTableIter it = gShaders.find(sprite->shaderName);
-	if (it == gShaders.end())
-	{
-		logError("Shader not found!!");
-	}
-	else
-	{
-		sprite->shaderID = it->second.GetShaderID();
-	}
-	glCreateSamplers(1, &sprite->samplerID);
-
-	updateMatrixSprite(sprite);
-}
-
-void initSprite(Sprite* sprite, const std::string& texPath, const std::string& shaderName, float w, float h)
-{
-	sprite->texPath = texPath;
-	sprite->shaderName = shaderName;
-	unsigned int texWidth;
-	unsigned int texHeight;
-	loadTexture(sprite->texPath, sprite->texID, texWidth, texHeight, gTextures);
-
-	sprite->width = w;
-	sprite->height = h;
-
-	setPivotType(sprite, PivotType::Custom, false);
-
-	initGeometry(sprite);
-
-	TShaderTableIter it = gShaders.find(sprite->shaderName);
-	if (it == gShaders.end())
-	{
-		logError("Shader not found!!");
-	}
-	else
-	{
-		sprite->shaderID = it->second.GetShaderID();
-	}
-	glCreateSamplers(1, &sprite->samplerID);
-
-	updateMatrixSprite(sprite);
-}
-
-void Sprite::cleanup()
-{
-	glDisableVertexAttribArray(0);
-	glDeleteBuffers(NUM_SPRITE_VBO, vboIDs);
-	glDeleteBuffers(1, &eboID);
-	glDeleteVertexArrays(NUM_SPRITE_VAO, &vaoID);
-	glDeleteSamplers(1, &samplerID);
-}
 
 static const int SCREEN_FULLSCREEN = 0;
 static const int SCREEN_WIDTH  = 800;
@@ -496,7 +132,7 @@ bool init(const char * caption, bool fullscreen, int windowWidth, int windowHeig
 	int w,h;
 	SDL_GetWindowSize(window, &w, &h);
 	glViewport(0, 0, w, h);
-	glClearColor(0.5f, 0.5f, 0.0f, 0.0f);
+	glClearColor(0.0f, 0.0f, 0.1f, 0.0f);
 
 	return true;
 }
@@ -504,15 +140,22 @@ bool init(const char * caption, bool fullscreen, int windowWidth, int windowHeig
 void close(SDL_Window* window, SDL_GLContext context, std::vector<Drawable*> drawables)
 {
 	// Cleanup all the things we bound and allocated
+	for (auto item : drawables)
+	{
+		item->cleanup();
+	}
+
 	for (TShaderTableIter it = gShaders.begin(); it != gShaders.end(); ++it)
 	{
 		it->second.cleanUp();
 	}
 
-	for (auto item : drawables)
+	for (TTextureTableIter it = gTextures.begin(); it != gTextures.end(); ++it)
 	{
-		item->cleanup();
+		it->second.cleanUp();
 	}
+
+
 
 	// Delete our OpengL context
 	SDL_GL_DeleteContext(context);
@@ -566,7 +209,7 @@ bool createShader(const std::string& name, const char* files[], GLenum* types, i
 
 void render(SDL_Window* w, Camera* c, const std::vector<Drawable*>& drawableObjects)
 {
-	glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+	glClearColor(0.0f, 0.0f, 0.1f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	for (auto drawable : drawableObjects)
@@ -629,27 +272,13 @@ int main(int argc, char* args[])
 		return -1;
 	}
 
-	gCam.eye = { 0.0f, 0.0f, 0.8f };
-	gCam.target = { 0.0f, 0.0f, 0.0f };
-	gCam.up = { 0.0f, 1.0f, 0.0f };
-	gCam.left = -SCREEN_WIDTH / 2;
-	gCam.right = SCREEN_WIDTH / 2;
-	gCam.top = SCREEN_HEIGHT / 2;
-	gCam.bot = -SCREEN_HEIGHT / 2;
-	gCam.zNear = 1.0f;
-	gCam.zFar = -1.0f;
+	initOrtho(&gCam, { 0.0f, 0.0f, 0.8f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { -SCREEN_WIDTH / 2, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, -SCREEN_HEIGHT / 2 }, -1.f, 1.f);
 	updateCameraViewMatrix(&gCam);
 	updateCameraProjectionMatrix(&gCam);
 
-	//perCam.eye = { 0.f, 0.f, 965.68f }; // Still an approximation, the idea with this combination of zFar and eye.z was to get the sprite to render to the screen using pixel-perfect...ish coords
-	//perCam.target = { 0.f, 0.f,0.f };
-	//perCam.up = { 0.f, 1.f,0.f };
-	//perCam.fov = glm::radians(45.f);
-	//perCam.aspect = WINDOWS_WIDTH / (float)WINDOWS_HEIGHT;
-	//perCam.zNear = 0.1f;
-	//perCam.zFar = 965.68f;
-	//updateCameraViewMatrix(&perCam);
-	//updateCameraProjectionMatrix(&perCam);
+	//initPerspective(&gPerspectiveCam, { 0.f, 0.f, 965.68f }, { 0.f, 0.f,0.f }, { 0.f, 1.f,0.f }, glm::radians(45.f), WINDOWS_WIDTH / (float)WINDOWS_HEIGHT, 0.1f, 965.68f);
+	//updateCameraViewMatrix(&gPerspectiveCam);
+	//updateCameraProjectionMatrix(&gPerspectiveCam);
 
 	const int DEFAULT_SPRITE_SHADER_NUM_FILES = 2;
 	const char* fileNames[DEFAULT_SPRITE_SHADER_NUM_FILES] = { "data/shader/text.vert", "data/shader/text.frag" };
@@ -671,6 +300,13 @@ int main(int argc, char* args[])
 	sprite.scale.xy = 1.f;
 	sprite.velocity.xy = 0.0f;
 	sprite.speed = 300.0f;
+
+	updateMatrixSprite(&sprite);
+	sprite.alphaBlend = true;
+	glm::vec2 zero;
+	setPivotType(&sprite, PivotType::Centre);
+
+
 
 	LineRenderer line("line");
 	line.shaderName = LINE_SHADER_NAME;
@@ -747,11 +383,6 @@ int main(int argc, char* args[])
 		* glm::rotate(line4.angle, glm::vec3(0.0f, 0.0f, 1.0f))
 		* glm::scale(glm::vec3(line4.scale.x, line4.scale.y, 1.0f));
 
-	updateMatrixSprite(&sprite);
-	sprite.alphaBlend = true;
-	glm::vec2 zero;
-	setPivotType(&sprite, PivotType::Centre);
-	
 	SDL_Event event;
 	bool quit = false;
 	
@@ -769,10 +400,10 @@ int main(int argc, char* args[])
 		start = end;
 		handleInput(event, quit, &input);
 		update(elapsedSeconds, &input, &sprite);
-		render(window, &gCam, { &sprite,&line, &line2, &line3,&line4 });
+		render(window, &gCam, { &line3, &sprite });
 	}
 
-	close(window, maincontext, { &line, &line2, &line3, &line4});
+	close(window, maincontext, { &line3, &sprite });
 	return 0;
 }
 
