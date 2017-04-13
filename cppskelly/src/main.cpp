@@ -26,22 +26,6 @@
 #include "Sprite.h"
 #include "Texture.h"
 
-struct Branch
-{
-	LineRenderer r;
-	
-	glm::vec2 a;
-	glm::vec2 b;
-	float control1;
-	float control2;
-	float controlAmp;
-	float controlSpeed;
-
-	void update(float dt)
-	{
-	}
-};
-
 static const int SCREEN_FULLSCREEN = 0;
 static const int SCREEN_WIDTH  = 800;
 static const int SCREEN_HEIGHT = 600;
@@ -54,7 +38,7 @@ static void APIENTRY openglCallbackFunction( GLenum source, GLenum type,
 {
   (void)source; (void)type; (void)id; 
   (void)severity; (void)length; (void)userParam;
-  logInfo(message);
+  //logInfo(message);
   if (severity == GL_DEBUG_SEVERITY_HIGH) 
   {
 	  logError("Aborting...");
@@ -280,17 +264,20 @@ void handleInput(SDL_Event& event, bool& quit, Input* input)
 class Tentacle
 {
 public:
-	Tentacle(int idx, const glm::vec2& a, const glm::vec2& b, float speed, float t1, float t2, float amp, float width, unsigned int colour)
+	Tentacle(int idx, const glm::vec2& a, const glm::vec2& b, float speed, float t1, float t2, float amp, float width, unsigned int colour, float sideSpeed, float sideAmplitude)
 		:a(a),
 		b(b),
-		speed(speed),
+		controlSpeed(speed),
 		segmentRatio1(t1),
 		segmentRatio2(t2),
-		amplitude(amp),
+		controlAmplitude(amp),
 		line("tentacle_" + std::to_string(idx)),
 		time(0.f),
 		width(width),
-		colour(colour)
+		colour(colour),
+		numSteps(20),
+		sideSpeed(sideSpeed),
+		sideAmplitude(sideAmplitude)
 	{}
 	~Tentacle()
 	{}
@@ -301,15 +288,40 @@ public:
 		line.colourRGBA[1] = ((colour & (0xff << 16)) >> 16)/ (float)255.f;
 		line.colourRGBA[2] = ((colour & (0xff << 8)) >> 8)/ (float)255.f;
 		line.colourRGBA[3] = (colour & (0xff)) / (float)255.f;
-		line.lineWidth = width;
+		line.alphaBlend = true;
+		int numPoints = numSteps + 1;
+
+		std::vector<GLfloat> colours;
+		float alphaStep = 1 / (float)numPoints;
+		for (int i = 0; i < numPoints; ++i)
+		{
+			float red = ((colour & (0xff << 24)) >> 24) / (float)255.f;
+			red *= (1 - alphaStep*i);
+			colours.push_back(red);
+			colours.push_back(((colour & (0xff << 16)) >> 16) / (float)255.f);
+			colours.push_back(((colour & (0xff << 8)) >> 8) / (float)255.f);
+			float alpha = (colour & (0xff)) / (float)255.f;
+			alpha *= (1 - alphaStep*i);
+			colours.push_back(alpha);
+		}
+		line.setPointColours(colours);
+
+		line.linePointWidths.resize(numPoints);
+		float step = 1 / (float)numPoints;
+		for (int i = 0; i < numPoints; ++i)
+		{
+			line.linePointWidths[i] = width * (1 - step*i);
+		}
+		//line.lineWidth = width;
 		line.shaderName = LINE_SHADER_NAME;
+
+		time = 0.15f;
 
 		glm::vec2 ab = b - a;
 		float abLen = glm::length(ab);
 		glm::vec2 dir = glm::normalize(ab);
 		normal = glm::normalize(glm::vec2(-ab.y, ab.x ));
 
-		time = 0.15f;
 		ref1 = a + dir*(segmentRatio1*abLen);
 		ref2 = a + dir*(segmentRatio2*abLen);
 
@@ -320,10 +332,21 @@ public:
 
 	void updateControlPoints()
 	{
-		float delta = cos(speed*time);
-		control1 = ref1 + normal*amplitude*delta;
-		control2 = ref2 - normal*amplitude*delta;
-		cubicBezier(a, b, control1, control2, line, 20);
+		glm::vec2 newb = b;
+		newb.y += sideAmplitude * sin(sideSpeed * time);
+
+		glm::vec2 ab = newb - a;
+		float abLen = glm::length(ab);
+		glm::vec2 dir = glm::normalize(ab);
+		glm::vec2 localNormal = glm::normalize(glm::vec2(-ab.y, ab.x));
+
+		ref1 = a + dir*(segmentRatio1*abLen);
+		ref2 = a + dir*(segmentRatio2*abLen);
+
+		float delta = cos(controlSpeed*time);		
+		control1 = ref1 + localNormal*controlAmplitude  *delta;
+		control2 = ref2 - localNormal*controlAmplitude *delta;
+		cubicBezier(a, newb, control1, control2, line, numSteps);
 	}
 
 	void update(float dt)
@@ -337,13 +360,16 @@ public:
 		return &line;
 	}
 private:
-	float speed;
+	float sideSpeed;
+	float controlSpeed;
+	float sideAmplitude;
 	float segmentRatio1; // Percentage of ab, for the first control point
 	float segmentRatio2; // Percentage of ab for the second...
-	float amplitude;
+	float controlAmplitude;
 	float time;
 	unsigned int colour;
 	float width;
+	int numSteps;
 
 	glm::vec2 a;
 	glm::vec2 b;
@@ -355,6 +381,10 @@ private:
 	glm::vec2 control2;
 	LineRenderer line;
 };
+
+template <typename T> int sgn(T val) {
+	return (T(0) < val) - (val < T(0));
+}
 
 int main(int argc, char* args[])
 {
@@ -402,16 +432,56 @@ int main(int argc, char* args[])
 	sprite.alphaBlend = true;
 	setPivotType(sprite, PivotType::Centre);
 
-	Tentacle t(0, { 0.f,-300 }, { 400.f,0.f }, -3.f, 0.25f, 0.75f, 200.f, 3.f, 0xAA33EEFF);
-	t.init();
-	Tentacle t1(0, { 0.f,-300 }, { -400.f,0.f }, 3.f, 0.25f, 0.75f, 200.f, 3.f, 0xAA33EEFF);
-	t1.init();
-	Tentacle t2(0, { 0.f,-300 }, { 0.f,300.f }, 3.f, 0.25f, 0.75f, 200.f, 3.f, 0xAA33EEFF);
-	t2.init();
-	Tentacle t3(0, { 0.f,-300 }, { -300.f,200.f }, 3.f, 0.25f, 0.75f, 200.f, 3.f, 0xAA33EEFF);
-	t3.init();
-	Tentacle t4(0, { 0.f,-300 }, { 300.f,200.f }, -3.f, 0.25f, 0.75f, 200.f, 3.f, 0xAA33EEFF);
-	t4.init();
+	std::vector<Tentacle> tentacles;
+	std::vector<Drawable*> tentacleViews;
+	const float speed = 5.f;
+	const float maxLineWidth = 8.f;
+	const unsigned int colour = 0x880fbbff;
+	const float t1 = 0.25f;
+	const float t2 = 0.75f;
+	float amplitude = 200.f;
+	const float tentacleLen = 450.f;
+
+	glm::vec2 a = { 0.f,-270.f };
+	float spread = 170.f;
+	const int numTentacles = 16;
+	tentacles.reserve(numTentacles);
+	float spreadStep = spread / (float)numTentacles;
+
+	float sideAmplitude = 25.f;
+	float sideSpeed = 5.5f;
+
+	int halvedTentacles = numTentacles / 2;
+	for (int i = 0; i < halvedTentacles; ++i)
+	{
+		glm::vec2 b = { a.x + tentacleLen * cos(glm::radians(spread)), a.y + tentacleLen * sin(glm::radians(spread)) };
+		int sign = sgn(b.x);
+		tentacles.emplace_back(2*i + 1, a, b, speed * sign, t1, t2, amplitude * sign, maxLineWidth, colour, sideSpeed, sideAmplitude);
+		tentacles.back().init();
+		tentacleViews.push_back(tentacles.back().getLine());
+
+		b.x = -b.x;
+		tentacles.emplace_back(2*(i+ 1), a, b, speed * sign, t1, t2, amplitude * -sign, maxLineWidth, colour, sideSpeed, sideAmplitude);
+		tentacles.back().init();
+		tentacleViews.push_back(tentacles.back().getLine());
+
+		amplitude *= 0.9f;
+		sideAmplitude *= 0.9f;
+		spread -= spreadStep;
+	}
+
+	//Tentacle t(0, { 0.f,-300 }, { 400.f,0.f }, -3.f, 0.25f, 0.75f, 200.f, 6.f, 0xAA33EEFF);
+	//t.init();
+	//Tentacle t1(0, { 0.f,-300 }, { -400.f,0.f }, 3.f, 0.25f, 0.75f, -200.f, 6.f, 0xAA33EEFF);
+	//t1.init();
+	//Tentacle t2(0, { 0.f,-300 }, { 0.f,300.f }, -3.f, 0.25f, 0.75f, 200.f, 6.f, 0xAA33EEFF);
+	//t2.init();
+	//Tentacle t2b(0, { 0.f,-300 }, { 0.f,300.f }, 3.f, 0.25f, 0.75f, -200.f, 6.f, 0xAA33EEFF);
+	//t2b.init();
+	//Tentacle t3(0, { 0.f,-300 }, { -300.f,200.f }, 3.f, 0.25f, 0.75f, -200.f, 6.f, 0xAA33EEFF);
+	//t3.init();
+	//Tentacle t4(0, { 0.f,-300 }, { 300.f,200.f }, -3.f, 0.25f, 0.75f, 200.f, 6.f, 0xAA33EEFF);
+	//t4.init();
 
 	SDL_Event event;
 	bool quit = false;
@@ -429,16 +499,15 @@ int main(int argc, char* args[])
 		float elapsedSeconds = std::chrono::duration_cast<std::chrono::duration<float>>(end - start).count();
 		start = end;
 		handleInput(event, quit, &input);
-		update(elapsedSeconds, &input, &sprite);
-		t.update(elapsedSeconds);
-		t1.update(elapsedSeconds);
-		t2.update(elapsedSeconds);
-		t3.update(elapsedSeconds);
-		t4.update(elapsedSeconds);
-		render(window, &gCam, { &sprite , t.getLine(), t1.getLine(),t2.getLine(), t3.getLine(),t4.getLine() });
+		//update(elapsedSeconds, &input, &sprite);
+		for (Tentacle& t : tentacles)
+		{
+			t.update(elapsedSeconds);
+		}
+		render(window, &gCam, tentacleViews);
 	}
 
-	close(window, maincontext, { &sprite, t.getLine(), t1.getLine(), t2.getLine(), t3.getLine(),t4.getLine() });
+	close(window, maincontext, tentacleViews);
 	return 0;
 }
 

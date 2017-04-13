@@ -409,9 +409,11 @@ void LineRenderer::setPointColours(const std::vector<GLfloat>& pointColours)
 	for (int i = 0; i < numPoints; ++i)
 	{
 		int vtxPairCoords = 2 * LINE_FLOATS_PER_COLOUR;
-		int colourIdx = i * vtxPairCoords;
+		int colourIdx = i * LINE_FLOATS_PER_COLOUR;
 		auto startIt = pointColours.begin() + colourIdx;
-		auto endIt = startIt + vtxPairCoords;
-		std::copy(startIt, endIt, colours.begin() + i * vtxPairCoords);
+		auto endIt = startIt + LINE_FLOATS_PER_COLOUR;
+		int tgtIdx = 2 * colourIdx;
+		std::copy(startIt, endIt, colours.begin() + tgtIdx);
+		std::copy(startIt, endIt, colours.begin() + tgtIdx + LINE_FLOATS_PER_COLOUR);
 	}
 }
