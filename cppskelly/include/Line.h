@@ -67,6 +67,7 @@ struct LineRenderer: public Drawable
 
 	void draw(SDL_Window* w, Camera* c) override;
 	void cleanup() override;
+	void setPointColours(const std::vector<GLfloat>& pointColours);
 
 	LineRenderer(const std::string& name)
 		:name(name)
@@ -80,12 +81,16 @@ struct LineRenderer: public Drawable
 
 void initGeometry(LineRenderer& renderer);
 
-void createSegment(const glm::vec2& a, const glm::vec2& b, LineRenderer& renderer);
-void createPolyline(const std::vector<glm::vec2>& points, LineRenderer& renderer);
+void buildSegment(const glm::vec2& a, const glm::vec2& b, LineRenderer& renderer);
+void buildPolyline(const std::vector<glm::vec2>& points, LineRenderer& renderer);
 
-void addPoints(const std::vector<glm::vec2&>& points, LineRenderer& renderer);
-void createQuadraticBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control, LineRenderer& renderer, int numSteps);
-void createCubicBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control1, const glm::vec2& control2, LineRenderer& renderer, int numSteps);
+void setPoints(const std::vector<glm::vec2>& points, LineRenderer& renderer);
+void quadraticBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control, LineRenderer& renderer, int numSteps);
+void cubicBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control1, const glm::vec2& control2, LineRenderer& renderer, int numSteps);
 void updateGeometry(LineRenderer& renderer);
 
+void updateIndexes(LineRenderer& renderer);
+
+void setRendererColours(int numPoints, LineRenderer& renderer);
+void setLineWidths(int numPoints, LineRenderer& renderer);
 #endif

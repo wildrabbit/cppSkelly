@@ -26,6 +26,22 @@
 #include "Sprite.h"
 #include "Texture.h"
 
+struct Branch
+{
+	LineRenderer r;
+	
+	glm::vec2 a;
+	glm::vec2 b;
+	float control1;
+	float control2;
+	float controlAmp;
+	float controlSpeed;
+
+	void update(float dt)
+	{
+	}
+};
+
 static const int SCREEN_FULLSCREEN = 0;
 static const int SCREEN_WIDTH  = 800;
 static const int SCREEN_HEIGHT = 600;
@@ -188,8 +204,6 @@ void update(float dt, Input* input, Sprite* sprite)
 
 	sprite->pos.x += sprite->velocity.x * dt;
 	sprite->pos.y += sprite->velocity.y * dt;
-	
-	updateMatrixSprite(sprite);
 }
 
 
@@ -263,6 +277,85 @@ void handleInput(SDL_Event& event, bool& quit, Input* input)
 	}
 }
 
+class Tentacle
+{
+public:
+	Tentacle(int idx, const glm::vec2& a, const glm::vec2& b, float speed, float t1, float t2, float amp, float width, unsigned int colour)
+		:a(a),
+		b(b),
+		speed(speed),
+		segmentRatio1(t1),
+		segmentRatio2(t2),
+		amplitude(amp),
+		line("tentacle_" + std::to_string(idx)),
+		time(0.f),
+		width(width),
+		colour(colour)
+	{}
+	~Tentacle()
+	{}
+
+	void init()
+	{
+		line.colourRGBA[0] = ((colour & (0xff << 24)) >> 24)/(float)255.f;
+		line.colourRGBA[1] = ((colour & (0xff << 16)) >> 16)/ (float)255.f;
+		line.colourRGBA[2] = ((colour & (0xff << 8)) >> 8)/ (float)255.f;
+		line.colourRGBA[3] = (colour & (0xff)) / (float)255.f;
+		line.lineWidth = width;
+		line.shaderName = LINE_SHADER_NAME;
+
+		glm::vec2 ab = b - a;
+		float abLen = glm::length(ab);
+		glm::vec2 dir = glm::normalize(ab);
+		normal = glm::normalize(glm::vec2(-ab.y, ab.x ));
+
+		time = 0.15f;
+		ref1 = a + dir*(segmentRatio1*abLen);
+		ref2 = a + dir*(segmentRatio2*abLen);
+
+		updateControlPoints();
+		initGeometry(line);
+		updateGeometry(line);
+	}
+
+	void updateControlPoints()
+	{
+		float delta = cos(speed*time);
+		control1 = ref1 + normal*amplitude*delta;
+		control2 = ref2 - normal*amplitude*delta;
+		cubicBezier(a, b, control1, control2, line, 20);
+	}
+
+	void update(float dt)
+	{
+		time += dt;
+		updateControlPoints();
+		updateGeometry(line);
+	}
+	LineRenderer* getLine() 
+	{
+		return &line;
+	}
+private:
+	float speed;
+	float segmentRatio1; // Percentage of ab, for the first control point
+	float segmentRatio2; // Percentage of ab for the second...
+	float amplitude;
+	float time;
+	unsigned int colour;
+	float width;
+
+	glm::vec2 a;
+	glm::vec2 b;
+	glm::vec2 normal;
+	glm::vec2 ref1;
+	glm::vec2 ref2;
+
+	glm::vec2 control1;
+	glm::vec2 control2;
+	LineRenderer line;
+};
+
 int main(int argc, char* args[])
 {
 	const int WINDOWS_WIDTH = 800;
@@ -272,7 +365,11 @@ int main(int argc, char* args[])
 		return -1;
 	}
 
-	initOrtho(&gCam, { 0.0f, 0.0f, 0.8f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { -SCREEN_WIDTH / 2, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, -SCREEN_HEIGHT / 2 }, -1.f, 1.f);
+	const glm::vec3 CAM_EYE = { 0.0f, 0.0f, 0.8f };
+	const glm::vec3 CAM_TARGET = glm::zero<glm::vec3>();
+	const glm::vec3 CAM_UP = { 0.0f, 1.0f, 0.f };
+
+	initOrtho(&gCam, CAM_EYE , CAM_TARGET, CAM_UP, { -SCREEN_WIDTH / 2, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, -SCREEN_HEIGHT / 2 }, -1.f, 1.f);
 	updateCameraViewMatrix(&gCam);
 	updateCameraProjectionMatrix(&gCam);
 
@@ -292,8 +389,9 @@ int main(int argc, char* args[])
 
 	static const std::string spriteName("chara");
 	static const std::string texPath("data/textures/chara_b.png");
+	
 	Sprite sprite(spriteName);
-	initSprite(&sprite, texPath, DEFAULT_SHADER_NAME);
+	initSprite(sprite, texPath, DEFAULT_SHADER_NAME, 64.f,64.f);
 	sprite.pos.x = 2.0f;
 	sprite.pos.y = 1.f;
 	sprite.angle = 0.0f;
@@ -301,87 +399,19 @@ int main(int argc, char* args[])
 	sprite.velocity.xy = 0.0f;
 	sprite.speed = 300.0f;
 
-	updateMatrixSprite(&sprite);
 	sprite.alphaBlend = true;
-	glm::vec2 zero;
-	setPivotType(&sprite, PivotType::Centre);
+	setPivotType(sprite, PivotType::Centre);
 
-
-
-	LineRenderer line("line");
-	line.shaderName = LINE_SHADER_NAME;
-	line.colourRGBA[0] = 1.f;
-	line.colourRGBA[1] = 0.f;
-	line.colourRGBA[2] = 0.f;
-	line.colourRGBA[3] = 1.f;
-
-	line.lineWidth = 15.f;
-	line.alphaBlend = true;
-	createSegment({ -400, 0 }, { 400,0 }, line);
-
-	initGeometry(line);
-	updateGeometry(line);
-	line.modelMatrix = glm::translate(glm::vec3(line.pos.x, line.pos.y, 0.0f))
-		* glm::rotate(line.angle, glm::vec3(0.0f, 0.0f, 1.0f))
-		* glm::scale(glm::vec3(line.scale.x, line.scale.y, 1.0f));
-
-	LineRenderer line2("line2");
-	line2.shaderName = LINE_SHADER_NAME;
-	line2.colourRGBA[0] = 1.f;
-	line2.colourRGBA[1] = 0.f;
-	line2.colourRGBA[2] = 1.f;
-	line2.colourRGBA[3] = 1.f;
-	line2.pos = glm::zero<glm::vec2>();
-	line2.angle = 0.f;
-	line2.lineWidth = 15.f;
-	line2.alphaBlend = true;
-	std::vector<glm::vec2> points = {
-		{ 0.f, -300.f },{ -50.f,-200.f },{ 50.f,-100.f },{ -50.f,0.f },{ 50.f,100.f }, {-50.f,200.f}, {0.f, 300.f}
-	};
-	createPolyline(points,line2);
-
-	initGeometry(line2);
-	updateGeometry(line2);
-	line2.modelMatrix = glm::translate(glm::vec3(line2.pos.x, line2.pos.y, 0.0f))
-		* glm::rotate(line2.angle, glm::vec3(0.0f, 0.0f, 1.0f))
-		* glm::scale(glm::vec3(line2.scale.x, line2.scale.y, 1.0f));
-
-
-	LineRenderer line3("line3");
-	line3.shaderName = LINE_SHADER_NAME;
-	line3.colourRGBA[0] = 0.3f;
-	line3.colourRGBA[1] = 0.8f;
-	line3.colourRGBA[2] = 0.8f;
-	line3.colourRGBA[3] = 1.f;
-	line3.pos = glm::zero<glm::vec2>();
-	line3.angle = 0.f;
-	line3.lineWidth = 1.f;
-	line3.alphaBlend = true;
-	createQuadraticBezier({ -400.f, 30.f }, { 0.f, 30.f }, { -200.f, 220.f },line3, 10);
-
-	initGeometry(line3);
-	updateGeometry(line3);
-	line3.modelMatrix = glm::translate(glm::vec3(line3.pos.x, line3.pos.y, 0.0f))
-		* glm::rotate(line3.angle, glm::vec3(0.0f, 0.0f, 1.0f))
-		* glm::scale(glm::vec3(line3.scale.x, line3.scale.y, 1.0f));
-
-	LineRenderer line4("line4");
-	line4.shaderName = LINE_SHADER_NAME;
-	line4.colourRGBA[0] = 0.8f;
-	line4.colourRGBA[1] = 0.8f;
-	line4.colourRGBA[2] = 0.8f;
-	line4.colourRGBA[3] = 1.f;
-	line4.pos = glm::zero<glm::vec2>();
-	line4.angle = 0.f;
-	line4.lineWidth = 1.f;
-	line4.alphaBlend = true;
-	createCubicBezier({ 0, 30.f }, { 400.f, 30.f }, { 100, 220.f }, {300.f,-190.f}, line4, 20);
-
-	initGeometry(line4);
-	updateGeometry(line4);
-	line4.modelMatrix = glm::translate(glm::vec3(line4.pos.x, line4.pos.y, 0.0f))
-		* glm::rotate(line4.angle, glm::vec3(0.0f, 0.0f, 1.0f))
-		* glm::scale(glm::vec3(line4.scale.x, line4.scale.y, 1.0f));
+	Tentacle t(0, { 0.f,-300 }, { 400.f,0.f }, -3.f, 0.25f, 0.75f, 200.f, 3.f, 0xAA33EEFF);
+	t.init();
+	Tentacle t1(0, { 0.f,-300 }, { -400.f,0.f }, 3.f, 0.25f, 0.75f, 200.f, 3.f, 0xAA33EEFF);
+	t1.init();
+	Tentacle t2(0, { 0.f,-300 }, { 0.f,300.f }, 3.f, 0.25f, 0.75f, 200.f, 3.f, 0xAA33EEFF);
+	t2.init();
+	Tentacle t3(0, { 0.f,-300 }, { -300.f,200.f }, 3.f, 0.25f, 0.75f, 200.f, 3.f, 0xAA33EEFF);
+	t3.init();
+	Tentacle t4(0, { 0.f,-300 }, { 300.f,200.f }, -3.f, 0.25f, 0.75f, 200.f, 3.f, 0xAA33EEFF);
+	t4.init();
 
 	SDL_Event event;
 	bool quit = false;
@@ -400,10 +430,15 @@ int main(int argc, char* args[])
 		start = end;
 		handleInput(event, quit, &input);
 		update(elapsedSeconds, &input, &sprite);
-		render(window, &gCam, { &line3, &sprite });
+		t.update(elapsedSeconds);
+		t1.update(elapsedSeconds);
+		t2.update(elapsedSeconds);
+		t3.update(elapsedSeconds);
+		t4.update(elapsedSeconds);
+		render(window, &gCam, { &sprite , t.getLine(), t1.getLine(),t2.getLine(), t3.getLine(),t4.getLine() });
 	}
 
-	close(window, maincontext, { &line3, &sprite });
+	close(window, maincontext, { &sprite, t.getLine(), t1.getLine(), t2.getLine(), t3.getLine(),t4.getLine() });
 	return 0;
 }
 

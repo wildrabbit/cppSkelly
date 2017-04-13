@@ -71,9 +71,8 @@ struct Sprite: public Drawable
 	float speed;
 };
 
-void updateMatrixSprite(Sprite* sprite);
-void initSprite(Sprite* sprite, const std::string& texPath, const std::string& shaderName);
-void initSprite(Sprite* sprite, const std::string& texPath, const std::string& shaderName, float w, float h);
-void setPivotType(Sprite* sprite, PivotType pivotType, bool update = true);
-void setCustomPivot(Sprite* sprite, glm::vec2* pivot, bool update = true);
+void initSprite(Sprite& sprite, const std::string& texPath, const std::string& shaderName);
+void initSprite(Sprite& sprite, const std::string& texPath, const std::string& shaderName, float w, float h);
+void setPivotType(Sprite& sprite, PivotType pivotType, bool update = true);
+void setCustomPivot(Sprite& sprite, glm::vec2* pivot, bool update = true);
 #endif

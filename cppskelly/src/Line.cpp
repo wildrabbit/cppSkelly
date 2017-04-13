@@ -23,7 +23,7 @@ const char* LINE_SHADER_NAME = "lines_default";
 #define BUFFER_OFFSET(i) ((void*)(i))
 
 
-void createQuadraticBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control, LineRenderer& renderer, int numSteps)
+void quadraticBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control, LineRenderer& renderer, int numSteps)
 {
 	std::vector<glm::vec2> points(numSteps + 1);
 	points.push_back(a);
@@ -40,24 +40,22 @@ void createQuadraticBezier(const glm::vec2& a, const glm::vec2& b, const glm::ve
 		points.push_back(t1 + tlerp * t);
 	}
 	points.push_back(b);
-	createPolyline(points, renderer);
+	buildPolyline(points, renderer);
 }
 
-void createCubicBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control1, const glm::vec2& control2, LineRenderer& renderer, int numSteps)
+void cubicBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& control1, const glm::vec2& control2, LineRenderer& renderer, int numSteps)
 {
-	std::vector<glm::vec2> points(numSteps + 1);
+	std::vector<glm::vec2> points;
 	points.push_back(a);
+	
 	float delta = 1.f / (float)numSteps;
-	glm::vec2 ac1 = control1 - a;
-	glm::vec2 c1c2 = control2 - control1;
-	glm::vec2 c2b = b - control2;
-
+	
 	for (int i = 1; i < numSteps; ++i)
 	{
 		float t = i * delta;
-		glm::vec2 t1 = a + ac1 * t;
-		glm::vec2 t2 = control1 + c1c2 * t;
-		glm::vec2 t3 = control2 + c2b * t;
+		glm::vec2 t1 = a + (control1 - a) * t;
+		glm::vec2 t2 = control1 + (control2 - control1) * t;
+		glm::vec2 t3 = control2 + (b - control2) * t;
 
 		glm::vec2 tLine1 = t2 - t1;
 		glm::vec2 tLine2 = t3 - t2;
@@ -67,48 +65,66 @@ void createCubicBezier(const glm::vec2& a, const glm::vec2& b, const glm::vec2& 
 
 		glm::vec2 tLerp = t5 - t4;
 
-		points.push_back(t4 + tLerp * t);
+		glm::vec2 p = t4 + tLerp * t;
+		points.push_back(p);
 	}
 	points.push_back(b);
-	createPolyline(points, renderer);
+	
+	buildPolyline(points, renderer);
 }
 
-void createPolyline(const std::vector<glm::vec2>& points, LineRenderer& renderer)
+void buildPolyline(const std::vector<glm::vec2>& points, LineRenderer& renderer)
 {	
-	int numPoints = points.size();
+	int numPoints = (int)points.size();
 	int numQuads = numPoints - 1;
 
-	if (renderer.colours.size() == 0)
-	{
-		int numVertices = 2 * numPoints;
-		int numColourValues = numVertices * LINE_FLOATS_PER_COLOUR;
-		renderer.colours.resize(numColourValues);
-		for (int i = 0; i < numVertices; ++i)
-		{
-			std::copy(std::begin(renderer.colourRGBA), std::end(renderer.colourRGBA), renderer.colours.begin() + i * LINE_FLOATS_PER_COLOUR);
-		}
-	}
-	if (renderer.linePointWidths.size() == 0 && renderer.lineWidth > 0)
-	{
-		renderer.linePointWidths.resize(numPoints, renderer.lineWidth);
-	}
+	setRendererColours(numPoints, renderer);
+	setLineWidths(numPoints, renderer);
+	
+	setPoints(points, renderer);
 
+	updateIndexes(renderer);
+}
+
+void updateIndexes(LineRenderer& renderer)
+{
+	if (renderer.indexes.size() != 0) return;
+
+	int numQuads = ((int)renderer.vertices.size() / 4) - 1;
+	renderer.indexes.clear();
+	for (int i = 0; i < numQuads; ++i)
+	{
+		const int baseIdx = i * 2;
+		renderer.indexes.push_back(baseIdx + 1);
+		renderer.indexes.push_back(baseIdx + 2);
+		renderer.indexes.push_back(baseIdx);
+		renderer.indexes.push_back(baseIdx + 1);
+		renderer.indexes.push_back(baseIdx + 3);
+		renderer.indexes.push_back(baseIdx + 2);
+	}
+}
+
+void setPoints(const std::vector<glm::vec2>& points, LineRenderer& renderer)
+{
+	int numPoints = (int)points.size();
 	glm::vec2 ab;
 	glm::vec2 normal;
 	renderer.vertices.clear();
-	renderer.indexes.clear();
-	const int indexesPerQuad = NUM_TRIANGLES_PER_QUAD * NUM_INDEXES_PER_TRIANGLE;
-
-	if (points.size() < 2) return;
+	
+	if (numPoints < 2) return;
 
 	ab = points[1] - points[0];
 	normal = { -ab.y, ab.x };
 	normal = normalize(normal);
-	renderer.vertices.push_back(points[0].x + renderer.linePointWidths[0] * normal.x);
-	renderer.vertices.push_back(points[0].y + renderer.linePointWidths[0] * normal.y);
-	renderer.vertices.push_back(points[0].x - renderer.linePointWidths[0] * normal.x);
-	renderer.vertices.push_back(points[0].y - renderer.linePointWidths[0] * normal.y);
-
+	GLfloat x = points[0].x + renderer.linePointWidths[0] * normal.x;
+	GLfloat y = points[0].y + renderer.linePointWidths[0] * normal.y;
+	renderer.vertices.push_back(x);
+	renderer.vertices.push_back(y);
+	x = points[0].x - renderer.linePointWidths[0] * normal.x;
+	y = points[0].y - renderer.linePointWidths[0] * normal.y;
+	renderer.vertices.push_back(x);
+	renderer.vertices.push_back(y);
+	
 	glm::vec2 bc;
 	glm::vec2 n2;
 	glm::vec2 tangent;
@@ -121,10 +137,14 @@ void createPolyline(const std::vector<glm::vec2>& points, LineRenderer& renderer
 
 		if (i == numPoints - 1)
 		{
-			renderer.vertices.push_back(points[i].x + renderer.linePointWidths[i] * normal.x);
-			renderer.vertices.push_back(points[i].y + renderer.linePointWidths[i] * normal.y);
-			renderer.vertices.push_back(points[i].x - renderer.linePointWidths[i] * normal.x);
-			renderer.vertices.push_back(points[i].y - renderer.linePointWidths[i] * normal.y);
+			x = points[i].x + renderer.linePointWidths[i] * normal.x;
+			y = points[i].y + renderer.linePointWidths[i] * normal.y;
+			renderer.vertices.push_back(x);
+			renderer.vertices.push_back(y);
+			x = points[i].x - renderer.linePointWidths[i] * normal.x;
+			y = points[i].y - renderer.linePointWidths[i] * normal.y;
+			renderer.vertices.push_back(x);
+			renderer.vertices.push_back(y);
 		}
 		else
 		{
@@ -134,35 +154,23 @@ void createPolyline(const std::vector<glm::vec2>& points, LineRenderer& renderer
 			tangent = normalize(normalize(ab) + normalize(bc));
 			miterNormal = { -tangent.y, tangent.x };
 			miterNormal = normalize(miterNormal);
-			float len = renderer.linePointWidths[i] / glm::dot(miterNormal,n2);
-			renderer.vertices.push_back(points[i].x + len * miterNormal.x);
-			renderer.vertices.push_back(points[i].y + len * miterNormal.y);
+			float len = renderer.linePointWidths[i] / glm::dot(miterNormal, n2);
+
+			x = points[i].x + len * miterNormal.x;
+			y = points[i].y + len * miterNormal.y;
+	
+			renderer.vertices.push_back(x);
+			renderer.vertices.push_back(y);
+			x = points[i].x - len * miterNormal.x;
+			y = points[i].y - len * miterNormal.y;
+	
 			renderer.vertices.push_back(points[i].x - len * miterNormal.x);
 			renderer.vertices.push_back(points[i].y - len * miterNormal.y);
 		}
-
 	}
-
-	for (int i = 0; i < numQuads; ++i)
-	{
-		const int baseIdx = i * 2;
-		renderer.indexes.push_back(baseIdx + 1);
-		renderer.indexes.push_back(baseIdx + 2);
-		renderer.indexes.push_back(baseIdx);
-		renderer.indexes.push_back(baseIdx + 1);
-		renderer.indexes.push_back(baseIdx + 3);
-		renderer.indexes.push_back(baseIdx + 2);
-	}
-	
-	
 }
 
-void addPoints(const std::vector<glm::vec2&>& points, LineRenderer& renderer)
-{
-
-}
-
-void createSegment(const glm::vec2& a, const glm::vec2& b, LineRenderer& renderer)
+void buildSegment(const glm::vec2& a, const glm::vec2& b, LineRenderer& renderer)
 {
 	int numPoints = 2;
 	int numQuads = 1;
@@ -276,12 +284,6 @@ void initGeometry(LineRenderer& renderer)
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, renderer.indexes.size() * sizeof(GLuint), renderer.indexes.data(), GL_STATIC_DRAW);
 	
 }
-void updateLineSprite (LineRenderer& line)
-{
-	line.modelMatrix = glm::translate(glm::vec3(line.pos.x, line.pos.y, 0.0f))
-		* glm::rotate(line.angle, glm::vec3(0.0f, 0.0f, 1.0f))
-		* glm::scale(glm::vec3(line.scale.x, line.scale.y, 1.0f));
-}
 
 void cleanupLine(LineRenderer& line)
 {
@@ -295,6 +297,10 @@ void cleanupLine(LineRenderer& line)
 
 void LineRenderer::draw(SDL_Window* w, Camera* c)
 {
+	modelMatrix = glm::translate(glm::vec3(pos.x, pos.y, 0.0f))
+		* glm::rotate(angle, glm::vec3(0.0f, 0.0f, 1.0f))
+		* glm::scale(glm::vec3(scale.x, scale.y, 1.0f));
+
 	glm::mat4 mvp = c->projMatrix * c->viewMatrix * modelMatrix;
 	// Pass matrices, setup shader params, etc
 	TShaderTableIter shaderIt = gShaders.find(shaderName);
@@ -344,7 +350,7 @@ void updateGeometry(LineRenderer& renderer)
 	glBindVertexArray(renderer.vaoID); // current vtex array
 									  // pos
 	glBindBuffer(GL_ARRAY_BUFFER, renderer.vboIDs[LINE_VBO_ATTR_POS]);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, renderer.vertices.size(), renderer.vertices.data());
+	glBufferSubData(GL_ARRAY_BUFFER, 0, renderer.vertices.size() * sizeof(GLfloat), renderer.vertices.data());
 	glVertexAttribPointer(LINE_VBO_ATTR_POS, LINE_FLOATS_PER_VERTEX, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, three floats/vtx
 
 	//glBindBuffer(GL_ARRAY_BUFFER, renderer.vboIDs[LINE_VBO_ATTR_UV]);
@@ -352,7 +358,7 @@ void updateGeometry(LineRenderer& renderer)
 	//glVertexAttribPointer(LINE_VBO_ATTR_UV, LINE_FLOATS_PER_UV, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, 2 floats/UV
 
 	glBindBuffer(GL_ARRAY_BUFFER, renderer.vboIDs[LINE_VBO_ATTR_COLOR]);
-	glBufferSubData(GL_ARRAY_BUFFER, 0, renderer.colours.size(), renderer.colours.data());
+	glBufferSubData(GL_ARRAY_BUFFER, 0, renderer.colours.size() * sizeof(GLfloat), renderer.colours.data());
 	glVertexAttribPointer(LINE_VBO_ATTR_COLOR, LINE_FLOATS_PER_COLOUR, GL_FLOAT, GL_FALSE, 0, 0); // Coord. info => Atr. index #0, 4 floats/Col
 }
 
@@ -364,4 +370,48 @@ void LineRenderer::cleanup()
 	glDeleteVertexArrays(NUM_LINE_VAO, &vaoID);
 	//glDeleteSamplers(1, &samplerID);
 
+}
+
+void setRendererColours(int numPoints, LineRenderer& renderer)
+{
+	int numVertices = 2 * numPoints;
+	int numColourValues = numVertices * LINE_FLOATS_PER_COLOUR;
+	
+	if (renderer.colours.size() == 0)
+	{
+		renderer.colours.resize(numColourValues);
+		int currentIdx = 0;
+		for (int i = 0; i < numVertices; ++i)
+		{
+			currentIdx = i*LINE_FLOATS_PER_COLOUR;
+			renderer.colours[currentIdx] = renderer.colourRGBA[0];
+			renderer.colours[currentIdx + 1] = renderer.colourRGBA[1];
+			renderer.colours[currentIdx + 2] = renderer.colourRGBA[2];
+			renderer.colours[currentIdx + 3] = renderer.colourRGBA[3];
+			//std::copy(std::begin(renderer.colourRGBA), std::end(renderer.colourRGBA), renderer.colours.begin() + i * LINE_FLOATS_PER_COLOUR);
+		}
+	}
+}
+
+void setLineWidths(int numPoints, LineRenderer& renderer)
+{
+	if (renderer.linePointWidths.size() == 0 && renderer.lineWidth > 0)
+	{
+		renderer.linePointWidths.resize(numPoints, renderer.lineWidth);
+	}
+}
+
+void LineRenderer::setPointColours(const std::vector<GLfloat>& pointColours)
+{
+	int numPoints = ((int)pointColours.size() / LINE_FLOATS_PER_COLOUR);
+	colours.resize(2 * numPoints * LINE_FLOATS_PER_COLOUR);
+	
+	for (int i = 0; i < numPoints; ++i)
+	{
+		int vtxPairCoords = 2 * LINE_FLOATS_PER_COLOUR;
+		int colourIdx = i * vtxPairCoords;
+		auto startIt = pointColours.begin() + colourIdx;
+		auto endIt = startIt + vtxPairCoords;
+		std::copy(startIt, endIt, colours.begin() + i * vtxPairCoords);
+	}
 }
